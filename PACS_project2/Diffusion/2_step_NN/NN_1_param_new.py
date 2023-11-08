@@ -219,6 +219,8 @@ for m in range(len(Nlf_models)):
             "nodes": 6.0,
             "opt": "Adam",
         }
+        
+        
         finalModel = getModel(
             best_params, name
         )  # final model chosen according to the best paramters
@@ -288,40 +290,40 @@ plt.legend(prop={"size": 8.3})
 plt.show()
 
 #########################     SAVE the OUTPUT      ##########################
-os.makedirs("Output_MF_final3")
+os.makedirs("Output_MF_final4")
 
 r2_HF_df.to_csv(
-    "./Output_MF_final3/r2_HF_lhs.txt",
+    "./Output_MF_final4/r2_HF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 mse_HF_df.to_csv(
-    "./Output_MF_final3/mse_HF_lhs.txt",
+    "./Output_MF_final4/mse_HF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 r2_LF_df.to_csv(
-    "./Output_MF_final3/r2_LF_lhs.txt",
+    "./Output_MF_final4/r2_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 mse_LF_df.to_csv(
-    "./Output_MF_final3/mse_LF_lhs.txt",
+    "./Output_MF_final4/mse_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 
-with open("./Output_MF_final3/U_HF_list.data", "wb") as filehandle:
+with open("./Output_MF_final4/U_HF_list.data", "wb") as filehandle:
     # store the data as binary data stream
     pickle.dump(U_HF_list, filehandle)
 
-with open("./Output_MF_final3/U_LF_list.data", "wb") as filehandle:
+with open("./Output_MF_final4/U_LF_list.data", "wb") as filehandle:
     pickle.dump(U_LF_list, filehandle)

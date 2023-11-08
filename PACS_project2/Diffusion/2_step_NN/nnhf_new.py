@@ -68,10 +68,14 @@ permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
-U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+#U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+U_HF = U_HF[:, -1, 83,83]
 U_HF = U_HF[permutation][0:n_HF]
+#U_HF_test = U_HF_test[
+#    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+#]
 U_HF_test = U_HF_test[
-    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+    :, -1, 83,83
 ]
 # TRANSFORMATION
 U_h_max_test = np.max(U_HF_test)
@@ -90,7 +94,7 @@ reaction_final = np.vstack(
 
 ##########################       NN_HF     ##########################
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 15
+MAX_EVAL = 5
 name = "HF"  # I leave the same NN,  even if we use HF data instead of LF
 K.clear_session()
 bayes_trials = Trials()
@@ -178,7 +182,7 @@ plt.legend(prop={"size": 8.3})
 plt.show()
 
 #########################     SAVE the OUTPUT      ##########################
-os.makedirs("Output_NNHF_new2")
+os.makedirs("Output_NNHF_right")
 
 R2_HF = pandas.DataFrame({"R2_HF": [r2_HF]})
 MSE_test_HF = pandas.DataFrame({"MSE_test_HF": [test_mse]})
@@ -186,14 +190,14 @@ MSE_test_HF = pandas.DataFrame({"MSE_test_HF": [test_mse]})
 
 # R2_LF.to_csv('./Output_NNHF/r2_HF.txt', header=True, index=False, sep='\t', mode='a')
 MSE_test_HF.to_csv(
-    "./Output_NNHF_new2/test_mse.txt",
+    "./Output_NNHF_right/test_mse.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 R2_HF.to_csv(
-    "./Output_NNHF_new2/r2_LF_lhs.txt",
+    "./Output_NNHF_right/r2_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",

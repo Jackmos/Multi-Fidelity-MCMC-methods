@@ -32,7 +32,7 @@ U_HF_test = U_HF
 NepoLF = 3000  # number of epochs for first NN: NN_LF
 NepoHF = 3000  # number of epochs for second NN: NN_HF
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 10
+Nlf = 15
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 # ADD NOISE
@@ -60,38 +60,53 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 
 # Output
 # We consider the central value of U
+#U_LF = U_LF[
+#    :,
+#    int(np.shape(U_LF)[1] / 2) - 1,
+#    int(np.shape(U_LF)[2] / 2),
+#    int(np.shape(U_LF)[3] / 2),
+#]
 U_LF = U_LF[
     :,
     int(np.shape(U_LF)[1] / 2) - 1,
-    int(np.shape(U_LF)[2] / 2),
-    int(np.shape(U_LF)[3] / 2),
+    26,26
 ]
 U_LF = U_LF[permutation][0:Nlf]
+#U_LF_test = U_LF_test[
+#    :,
+#    int(np.shape(U_LF_test)[1] / 2) - 1,
+#    int(np.shape(U_LF_test)[2] / 2),
+#    int(np.shape(U_LF_test)[3] / 2),
+#]
 U_LF_test = U_LF_test[
     :,
     int(np.shape(U_LF_test)[1] / 2) - 1,
-    int(np.shape(U_LF_test)[2] / 2),
-    int(np.shape(U_LF_test)[3] / 2),
+    26,26
 ]
 permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
-U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+#U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+U_HF = U_HF[:, -1, 83,83]
 U_HF = U_HF[permutation][0:n_HF]
+#U_HF_test = U_HF_test[
+#    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+#]
 U_HF_test = U_HF_test[
-    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+    :, -1, 83,83
 ]
 
 # TRANSFORMATION
 
 U_h_max_test = np.max(U_HF_test)
 U_h_min_test = np.min(U_HF_test)
-
+U_t_max_test = np.max(U_LF_test)
+U_t_min_test = np.min(U_LF_test)
 
 # U_LF = (U_LF - U_t_min_train) / (U_t_max_train - U_t_min_train)
-U_LF = (U_LF - U_h_min_test) / (U_h_max_test - U_h_min_test)
-U_LF_test = (U_LF_test - U_h_min_test) / (U_h_max_test - U_h_min_test)
+U_LF = (U_LF - U_t_min_test) / (U_t_max_test - U_t_min_test)
+U_LF_test = (U_LF_test - U_t_min_test) / (U_t_max_test - U_t_min_test)
 U_HF = (U_HF - U_h_min_test) / (U_h_max_test - U_h_min_test)
 U_HF_test = (U_HF_test - U_h_min_test) / (U_h_max_test - U_h_min_test)
 
@@ -166,7 +181,7 @@ reaction_final = np.vstack(
 name = "2step"
 
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 15
+MAX_EVAL = 5
 
 K.clear_session()
 bayes_trials = Trials()

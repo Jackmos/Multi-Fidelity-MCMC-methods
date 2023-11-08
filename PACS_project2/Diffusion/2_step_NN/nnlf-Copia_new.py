@@ -22,7 +22,29 @@ import os
 
 seed = 7
 np.random.seed(seed)
-# new
+# Nlf=15
+#{'kernel_init': 'uniform', 'l2weight': 0.02672483771802389, 'lr': 0.0021557686739560574, 'nodes': 32.0, 'opt': 'Adamax'}
+#1/1 [==============================] - 0s 62ms/step
+#Elapsed time:  2490.439029100002
+
+#LF Model:
+#Elapsed time:  16.3247005000012
+
+#LF Model:
+#Test MSE: 0.18578364760206803
+#R^2: -0.6315290167326626
+#1/1 [==============================] - 0s 78ms/step
+#Elapsed time:  2519.741864099982
+
+#LF Model:
+#Elapsed time:  45.627535499981605
+
+#LF Model:
+#Test MSE: 0.21627322394283716
+#R^2: -0.725987060875829
+#1/1 [==============================] - 0s 16ms/step
+#----------------------------------
+# new Nlf=20
 #{'kernel_init': 'uniform', 'l2weight': 0.0021453159318891644, 'lr': 0.00038420659577907094, 'nodes': 40.0, 'opt': 'Adam'}
 #1/1 [==============================] - 0s 67ms/step
 #Elapsed time:  3404.7170924000093
@@ -74,7 +96,7 @@ U_LF_test = U_LF
 
 NepoLF = 3000  # number of epochs for second NN: NN_HF
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 20
+Nlf = 15
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 #########################     TRAIN SET      ##########################
@@ -92,10 +114,14 @@ reaction_LF_test = (reaction_LF_test - reaction_min) / (
 permutation = np.random.permutation(len(reaction_LF))
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
-U_LF = U_LF[:, -1, int(np.shape(U_LF)[2] / 2), int(np.shape(U_LF)[3] / 2)]
+#U_LF = U_LF[:, -1, int(np.shape(U_LF)[2] / 2), int(np.shape(U_LF)[3] / 2)]
+U_LF = U_LF[:, -1, 26,26]
 U_LF = U_LF[permutation][0:Nlf]
+#U_LF_test = U_LF_test[
+#    :, -1, int(np.shape(U_LF_test)[2] / 2), int(np.shape(U_LF_test)[3] / 2)
+#]
 U_LF_test = U_LF_test[
-    :, -1, int(np.shape(U_LF_test)[2] / 2), int(np.shape(U_LF_test)[3] / 2)
+    :, -1, 26,26
 ]
 # TRANSFORMATION
 U_h_max_test = np.max(U_LF_test)
@@ -113,7 +139,7 @@ reaction_final = np.vstack(
 ########
 ##########################       NN_LF     ##########################
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 15
+MAX_EVAL = 5
 name = "LF"
 K.clear_session()
 bayes_trials = Trials()
@@ -191,8 +217,11 @@ finalModel = getModel(
 
 file_path_HF = "../DATA/reaction_diffusion_HF.mat"
 (reaction_HF_test, U_HF_test) = import_data(file_path_HF)
+#U_HF_test = U_HF_test[
+#    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+#]
 U_HF_test = U_HF_test[
-    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+    :, -1, 83,83
 ]
 
 reaction_HF_test = (reaction_HF_test - np.min(reaction_HF_test)) / (
@@ -256,7 +285,7 @@ plt.legend(prop={"size": 8.3})
 plt.show()
 
 #########################     SAVE the OUTPUT      ##########################
-os.makedirs("Output_NNLF2")
+os.makedirs("Output_NNLF_end")
 
 R2_HF = pandas.DataFrame({"R2_HF": [r2_HF]})
 R2_LF = pandas.DataFrame({"R2_LF": [r2_LF]})
@@ -265,28 +294,28 @@ MSE_test_HF = pandas.DataFrame({"MSE_test_HF": [test_mse_HF]})
 
 
 R2_LF.to_csv(
-    "./Output_NNLF2/r2_HF.txt",
+    "./Output_NNLF_end/r2_HF.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 MSE_test_HF.to_csv(
-    "./Output_NNLF2/test_mse.txt",
+    "./Output_NNLF_end/test_mse.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 R2_HF.to_csv(
-    "./Output_NNLF2/r2_LF_lhs.txt",
+    "./Output_NNLF_end/r2_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 MSE_test_LF.to_csv(
-    "./Output_NNLF2/mse_LF_lhs.txt",
+    "./Output_NNLF_end/mse_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
