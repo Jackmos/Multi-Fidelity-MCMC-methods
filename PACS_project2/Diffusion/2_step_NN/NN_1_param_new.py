@@ -19,7 +19,7 @@ import os
 seed = 7
 np.random.seed(seed)
 
-file_path_LF = "../DATA/reaction_diffusion_LF.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_46_big.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
@@ -31,7 +31,7 @@ U_HF_test = U_HF
 # NORMALIZATION
 
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 10
+Nlf = 20
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 reaction_max = np.max(reaction_LF_test)
@@ -51,26 +51,26 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 # We consider the central value of U
 U_LF = U_LF[
     :,
-    int(np.shape(U_LF)[1] / 2) - 1,
-    int(np.shape(U_LF)[2] / 2),
-    int(np.shape(U_LF)[3] / 2),
+     - 1,
+    20,
+    20,
 ]
 U_LF = U_LF[permutation][0:Nlf]
 U_LF_test = U_LF_test[
     :,
-    int(np.shape(U_LF_test)[1] / 2) - 1,
-    int(np.shape(U_LF_test)[2] / 2),
-    int(np.shape(U_LF_test)[3] / 2),
+    - 1,
+    20,
+    20
 ]
 
 permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
-U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+U_HF = U_HF[:, -1, 44,44]
 U_HF = U_HF[permutation][0:n_HF]
 U_HF_test = U_HF_test[
-    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+    :, -1, 44,44
 ]
 
 U_h_max_test = np.max(U_HF_test)
@@ -90,7 +90,7 @@ NepoHF = 3000  # number of epochs for second NN: NN_HF
 
 U_LF_list = []
 U_HF_list = []
-# <------------------------------here
+
 HF_data = [10]
 HF_data_str = [str(num) for num in HF_data]
 r2_HF_df = pandas.DataFrame(index=HF_data_str)  # dataframe which stores HF R^2
@@ -290,40 +290,40 @@ plt.legend(prop={"size": 8.3})
 plt.show()
 
 #########################     SAVE the OUTPUT      ##########################
-os.makedirs("Output_MF_final4")
+os.makedirs("Output_MF_Nlf10_10")
 
 r2_HF_df.to_csv(
-    "./Output_MF_final4/r2_HF_lhs.txt",
+    "./Output_MF_Nlf10_10/r2_HF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 mse_HF_df.to_csv(
-    "./Output_MF_final4/mse_HF_lhs.txt",
+    "./Output_MF_Nlf10_10/mse_HF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 r2_LF_df.to_csv(
-    "./Output_MF_final4/r2_LF_lhs.txt",
+    "./Output_MF_Nlf10_10/r2_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 mse_LF_df.to_csv(
-    "./Output_MF_final4/mse_LF_lhs.txt",
+    "./Output_MF_Nlf10_10/mse_LF_lhs.txt",
     header=True,
     index=False,
     sep="\t",
     mode="a",
 )
 
-with open("./Output_MF_final4/U_HF_list.data", "wb") as filehandle:
+with open("./Output_MF_Nlf10_10/U_HF_list.data", "wb") as filehandle:
     # store the data as binary data stream
     pickle.dump(U_HF_list, filehandle)
 
-with open("./Output_MF_final4/U_LF_list.data", "wb") as filehandle:
+with open("./Output_MF_Nlf10_10/U_LF_list.data", "wb") as filehandle:
     pickle.dump(U_LF_list, filehandle)

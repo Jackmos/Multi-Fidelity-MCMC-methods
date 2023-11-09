@@ -89,14 +89,14 @@ np.random.seed(seed)
 
 ########################     PREPARATION      ##########################
 
-file_path_LF = "../DATA/reaction_diffusion_LF.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_46_big.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
 
 NepoLF = 3000  # number of epochs for second NN: NN_HF
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 15
+Nlf = 20
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 #########################     TRAIN SET      ##########################
@@ -115,13 +115,13 @@ permutation = np.random.permutation(len(reaction_LF))
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 #U_LF = U_LF[:, -1, int(np.shape(U_LF)[2] / 2), int(np.shape(U_LF)[3] / 2)]
-U_LF = U_LF[:, -1, 26,26]
+U_LF = U_LF[:, -1, 20,20]
 U_LF = U_LF[permutation][0:Nlf]
 #U_LF_test = U_LF_test[
 #    :, -1, int(np.shape(U_LF_test)[2] / 2), int(np.shape(U_LF_test)[3] / 2)
 #]
 U_LF_test = U_LF_test[
-    :, -1, 26,26
+    :, -1, 20,20
 ]
 # TRANSFORMATION
 U_h_max_test = np.max(U_LF_test)
@@ -221,7 +221,7 @@ file_path_HF = "../DATA/reaction_diffusion_HF.mat"
 #    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
 #]
 U_HF_test = U_HF_test[
-    :, -1, 83,83
+    :, -1, 44,44
 ]
 
 reaction_HF_test = (reaction_HF_test - np.min(reaction_HF_test)) / (

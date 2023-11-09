@@ -20,7 +20,7 @@ import os
 seed = 7
 np.random.seed(seed)
 
-file_path_LF = "../DATA/reaction_diffusion_LF.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_10.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
@@ -32,7 +32,7 @@ U_HF_test = U_HF
 # NORMALIZATION
 
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 10
+Nlf = 20
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 reaction_max = np.max(reaction_LF_test)
@@ -52,26 +52,24 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 # We consider the central value of U
 U_LF = U_LF[
     :,
-    int(np.shape(U_LF)[1] / 2) - 1,
-    int(np.shape(U_LF)[2] / 2),
-    int(np.shape(U_LF)[3] / 2),
+    - 1,
+    6,6
 ]
 U_LF = U_LF[permutation][0:Nlf]
 U_LF_test = U_LF_test[
     :,
-    int(np.shape(U_LF_test)[1] / 2) - 1,
-    int(np.shape(U_LF_test)[2] / 2),
-    int(np.shape(U_LF_test)[3] / 2),
+     - 1,
+    6,6
 ]
 
 permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
-U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
+U_HF = U_HF[:, -1, 66,66]
 U_HF = U_HF[permutation][0:n_HF]
 U_HF_test = U_HF_test[
-    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
+    :, -1, 66,66
 ]
 
 U_h_max_test = np.max(U_HF_test)
