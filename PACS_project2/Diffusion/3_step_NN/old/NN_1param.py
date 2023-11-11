@@ -20,7 +20,7 @@ import os
 seed = 7
 np.random.seed(seed)
 
-file_path_LF = "../DATA/reaction_diffusion_LF_10.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_28_d1.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
@@ -53,23 +53,23 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 U_LF = U_LF[
     :,
     - 1,
-    6,6
+    12,12
 ]
 U_LF = U_LF[permutation][0:Nlf]
 U_LF_test = U_LF_test[
     :,
      - 1,
-    6,6
+    12,12
 ]
 
 permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
-U_HF = U_HF[:, -1, 66,66]
+U_HF = U_HF[:, -1, 44,44]
 U_HF = U_HF[permutation][0:n_HF]
 U_HF_test = U_HF_test[
-    :, -1, 66,66
+    :, -1, 44,44
 ]
 
 U_h_max_test = np.max(U_HF_test)
@@ -84,9 +84,9 @@ U_HF = (U_HF - U_h_min_test) / (U_h_max_test - U_h_min_test)
 U_HF_test = (U_HF_test - U_h_min_test) / (U_h_max_test - U_h_min_test)
 
 
-NepoLF = 3000  # number of epochs for first NN: NN_LF
+NepoLF = 8000  # number of epochs for first NN: NN_LF
 NepoLin = 1500
-NepoHF = 3000  # number of epochs for second NN: NN_HF
+NepoHF = 8000  # number of epochs for second NN: NN_HF 
 
 U_LF_list = []
 U_Lin_list = []
@@ -281,25 +281,25 @@ print(mse_HF_df.round(5))
 
 
 #########################     SAVE the OUTPUT      ##########################
-os.makedirs("Output_4")
+os.makedirs("Output_final")
 
 r2_HF_df.to_csv(
-    "./Output_4/r2_HF_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/r2_HF_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 mse_HF_df.to_csv(
-    "./Output_4/mse_HF_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/mse_HF_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 r2_LF_df.to_csv(
-    "./Output_4/r2_LF_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/r2_LF_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 mse_LF_df.to_csv(
-    "./Output_4/mse_LF_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/mse_LF_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 r2_Lin_df.to_csv(
-    "./Output_4/r2_Lin_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/r2_Lin_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 mse_Lin_df.to_csv(
-    "./Output_4/mse_Lin_lhs.txt", header=True, index=False, sep="\t", mode="a"
+    "./Output_final/mse_Lin_lhs.txt", header=True, index=False, sep="\t", mode="a"
 )
 
 with open("estimated_UHF.txt", "w") as file:

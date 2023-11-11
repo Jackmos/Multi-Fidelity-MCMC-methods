@@ -19,7 +19,7 @@ import os
 seed = 7
 np.random.seed(seed)
 
-file_path_LF = "../DATA/reaction_diffusion_LF_46_big.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_28_d1.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
@@ -52,15 +52,15 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 U_LF = U_LF[
     :,
      - 1,
-    20,
-    20,
+    12,
+    12,
 ]
 U_LF = U_LF[permutation][0:Nlf]
 U_LF_test = U_LF_test[
     :,
     - 1,
-    20,
-    20
+    12,
+    12
 ]
 
 permutation = np.random.permutation(len(reaction_HF))
@@ -85,7 +85,7 @@ U_HF = (U_HF - U_h_min_test) / (U_h_max_test - U_h_min_test)
 U_HF_test = (U_HF_test - U_h_min_test) / (U_h_max_test - U_h_min_test)
 
 
-NepoLF = 3000  # number of epochs for first NN: NN_LF
+NepoLF = 8000  # number of epochs for first NN: NN_LF
 NepoHF = 3000  # number of epochs for second NN: NN_HF
 
 U_LF_list = []

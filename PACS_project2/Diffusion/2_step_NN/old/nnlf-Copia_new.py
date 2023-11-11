@@ -22,6 +22,10 @@ import os
 
 seed = 7
 np.random.seed(seed)
+# Nlf=20. 28 data, d=0.1
+
+
+
 # Nlf=15
 #{'kernel_init': 'uniform', 'l2weight': 0.02672483771802389, 'lr': 0.0021557686739560574, 'nodes': 32.0, 'opt': 'Adamax'}
 #1/1 [==============================] - 0s 62ms/step
@@ -89,12 +93,12 @@ np.random.seed(seed)
 
 ########################     PREPARATION      ##########################
 
-file_path_LF = "../DATA/reaction_diffusion_LF_46_big.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_28_d1.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
 
-NepoLF = 3000  # number of epochs for second NN: NN_HF
+NepoLF = 8000  # number of epochs for second NN: NN_HF
 permutation = np.random.permutation(len(reaction_LF))
 Nlf = 20
 reaction_LF = reaction_LF[permutation][0:Nlf]
@@ -115,13 +119,13 @@ permutation = np.random.permutation(len(reaction_LF))
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 #U_LF = U_LF[:, -1, int(np.shape(U_LF)[2] / 2), int(np.shape(U_LF)[3] / 2)]
-U_LF = U_LF[:, -1, 20,20]
+U_LF = U_LF[:, -1, 12,12]
 U_LF = U_LF[permutation][0:Nlf]
 #U_LF_test = U_LF_test[
 #    :, -1, int(np.shape(U_LF_test)[2] / 2), int(np.shape(U_LF_test)[3] / 2)
 #]
 U_LF_test = U_LF_test[
-    :, -1, 20,20
+    :, -1, 12,12
 ]
 # TRANSFORMATION
 U_h_max_test = np.max(U_LF_test)
@@ -139,7 +143,7 @@ reaction_final = np.vstack(
 ########
 ##########################       NN_LF     ##########################
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 5
+MAX_EVAL = 3
 name = "LF"
 K.clear_session()
 bayes_trials = Trials()

@@ -5,7 +5,7 @@
 # -*- coding: utf-8 -*-
 from keras.models import Model
 from keras.layers import Dense, Input, Dropout
-
+#from keras.constraints import clip_norm
 # from keras.layers.merge import concatenate
 from tensorflow.keras.layers import (
     concatenate,
@@ -19,6 +19,8 @@ import tensorflow as tf
 import keras as kr
 import h5py
 
+def custom_activation(x):
+    return x + K.square(K.sin(x))
 
 def import_data(name):
     with h5py.File(name, "r") as file:
@@ -72,8 +74,9 @@ def getModel(params, name):
         hidden1 = Dense(
             int(params["nodes"]),
             kernel_regularizer=l2(params["l2weight"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
+            #kernel_constraint=clip_norm(1.0)
         )(
             inputs
         )  # kernel_regularizer=l2(params['l2weight']),
@@ -87,27 +90,31 @@ def getModel(params, name):
         inputs = Input(shape=(1,))
         hidden1 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(0.001),
+            #kernel_constraint=clip_norm(1.0)
         )(inputs)
         hidden2 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(0.001),
+            #kernel_constraint=clip_norm(1.0)
         )(hidden1)
         hidden3 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(0.001),
+           # kernel_constraint=clip_norm(1.0)
         )(hidden2)
         hidden4 = Dense(
             64,
-            activation="tanh",
+            activation="sigmoid",
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(0.001),
+            #kernel_constraint=clip_norm(1.0)
         )(hidden3)
         output = Dense(1, activation="linear", name="LF")(hidden4)
 
@@ -115,9 +122,10 @@ def getModel(params, name):
         inputs = Input(shape=(1,))  # 4
         hidden1 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
+            #kernel_constraint=clip_norm(1.0)
         )(inputs)
         hidden1 = Dropout(0.5)(hidden1)
         # hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)

@@ -17,6 +17,8 @@ import keras.backend as K
 import tensorflow as tf
 import h5py
 
+def custom_activation(x):
+    return x + K.square(K.sin(x))
 
 def import_data(name):
     with h5py.File(name, "r") as file:
@@ -63,7 +65,7 @@ def getModel(params, name):
         # NN_HF is a  shallow neural network consisting of a single layer:
         hidden1 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
@@ -74,16 +76,16 @@ def getModel(params, name):
     elif name == "LF":
         inputs = Input(shape=(1,))
         hidden1 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(inputs)
         hidden2 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden1)
         hidden3 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden2)
         hidden4 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation="sigmoid", kernel_initializer=params["kernel_init"]
         )(hidden3)
         output = Dense(1, activation="linear", name="LF")(hidden4)
 
@@ -91,25 +93,25 @@ def getModel(params, name):
         inputs = Input(shape=(1,))
         hidden1 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(inputs)
         hidden2 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden1)
         hidden3 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden2)
         hidden4 = Dense(
             64,
-            activation="tanh",
+            activation="sigmoid",
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden3)
@@ -135,7 +137,7 @@ def getModel(params, name):
         )  # third NN (NN_HF) in the 3-steps architecture
         hidden1 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)

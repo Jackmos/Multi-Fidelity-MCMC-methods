@@ -22,6 +22,20 @@ import os
 
 seed = 7
 np.random.seed(seed)
+# Nhf=10 28  d01
+#{'kernel_init': 'glorot_uniform', 'l2weight': 0.31079498685385487, 'lr': 0.003969499124695863, 'nodes': 16.0, 'opt': 'Adamax'}
+#1/1 [==============================] - 0s 56ms/step
+#Elapsed time:  327.78460030000133
+
+#HF Model:
+#Elapsed time:  15.074707700012368
+
+#HF Model:
+#Test MSE: 0.11388713535654063
+#R^2: -0.010986865542162327
+
+
+
 # 100%|██████████| 15/15 [29:06<00:00, 116.40s/trial, best loss: 0.15252575435510196]
 # {'kernel_init': 'uniform', 'l2weight': 30.762510506562624, 'lr': 0.08323282463433596, 'nodes': 10.0, 'opt': 'Adam'}
 # 1/1 [==============================] - 0s 47ms/step
@@ -69,13 +83,13 @@ n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
 #U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
-U_HF = U_HF[:, -1, 83,83]
+U_HF = U_HF[:, -1, 44,44]
 U_HF = U_HF[permutation][0:n_HF]
 #U_HF_test = U_HF_test[
 #    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
 #]
 U_HF_test = U_HF_test[
-    :, -1, 83,83
+    :, -1, 44,44
 ]
 # TRANSFORMATION
 U_h_max_test = np.max(U_HF_test)
@@ -94,7 +108,7 @@ reaction_final = np.vstack(
 
 ##########################       NN_HF     ##########################
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 5
+MAX_EVAL = 3
 name = "HF"  # I leave the same NN,  even if we use HF data instead of LF
 K.clear_session()
 bayes_trials = Trials()

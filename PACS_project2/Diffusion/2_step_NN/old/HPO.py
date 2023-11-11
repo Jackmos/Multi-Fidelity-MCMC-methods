@@ -20,7 +20,7 @@ np.random.seed(seed)
 
 ########################     PREPARATION      ##########################
 # introduction of the data
-file_path_LF = "../DATA/reaction_diffusion_LF.mat"
+file_path_LF = "../DATA/reaction_diffusion_LF_28_d1.mat"
 (reaction_LF, U_LF) = import_data(file_path_LF)
 reaction_LF_test = reaction_LF
 U_LF_test = U_LF
@@ -29,10 +29,10 @@ file_path_HF = "../DATA/reaction_diffusion_HF.mat"
 reaction_HF_test = reaction_HF
 U_HF_test = U_HF
 #########################     TRAIN SET      ##########################
-NepoLF = 3000  # number of epochs for first NN: NN_LF
+NepoLF = 8000  # number of epochs for first NN: NN_LF
 NepoHF = 3000  # number of epochs for second NN: NN_HF
 permutation = np.random.permutation(len(reaction_LF))
-Nlf = 15
+Nlf = 20
 reaction_LF = reaction_LF[permutation][0:Nlf]
 
 # ADD NOISE
@@ -68,8 +68,8 @@ reaction_HF_test = (reaction_HF_test - reaction_min) / (
 #]
 U_LF = U_LF[
     :,
-    int(np.shape(U_LF)[1] / 2) - 1,
-    26,26
+     - 1,
+    12,12
 ]
 U_LF = U_LF[permutation][0:Nlf]
 #U_LF_test = U_LF_test[
@@ -81,20 +81,20 @@ U_LF = U_LF[permutation][0:Nlf]
 U_LF_test = U_LF_test[
     :,
     int(np.shape(U_LF_test)[1] / 2) - 1,
-    26,26
+    12,12
 ]
 permutation = np.random.permutation(len(reaction_HF))
 n_HF = 10
 reaction_HF = reaction_HF[permutation][0:n_HF]
 
 #U_HF = U_HF[:, -1, int(np.shape(U_HF)[2] / 2), int(np.shape(U_HF)[3] / 2)]
-U_HF = U_HF[:, -1, 83,83]
+U_HF = U_HF[:, -1, 44,44]
 U_HF = U_HF[permutation][0:n_HF]
 #U_HF_test = U_HF_test[
 #    :, -1, int(np.shape(U_HF_test)[2] / 2), int(np.shape(U_HF_test)[3] / 2)
 #]
 U_HF_test = U_HF_test[
-    :, -1, 83,83
+    :, -1, 44,44
 ]
 
 # TRANSFORMATION
@@ -181,7 +181,7 @@ reaction_final = np.vstack(
 name = "2step"
 
 ####################    HYPERPARAMETER OPTIMIZATION    #######################
-MAX_EVAL = 5
+MAX_EVAL = 15
 
 K.clear_session()
 bayes_trials = Trials()
