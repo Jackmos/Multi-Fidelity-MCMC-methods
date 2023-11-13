@@ -179,7 +179,7 @@ def getModel(params, name):
         )  # third NN (NN_HF) in the 3-steps architecture
         hidden1 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
@@ -190,32 +190,32 @@ def getModel(params, name):
         inputs = Input(shape=(1,))
         hidden1 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
         hidden2 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden1)
         hidden3 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden2)
         hidden4 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden3)
 
         GPlayer = Dense(
             2,
-            activation="linear",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden4)
@@ -237,19 +237,19 @@ def getModel(params, name):
         inputs = Input(shape=(1,))
 
         hidden1 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(
             inputs
         )  # The same input layer is used for high and low fidelity data
         hidden2 = Dense(
-            64, activation="tanh", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden1)
-        outputLF = Dense(1, activation="linear", name="LF")(
+        outputLF = Dense(1, activation=custom_activation, name="LF")(
             hidden2
         )  # low-fidelity output is situate at the third hidden layer.
         outputadd = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden2)
@@ -257,14 +257,14 @@ def getModel(params, name):
 
         hidden3 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(merge)
 
         hidden4 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation=custom_activation,
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden3)
