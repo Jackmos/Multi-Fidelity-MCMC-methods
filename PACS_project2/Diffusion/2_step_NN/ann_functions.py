@@ -1,15 +1,9 @@
 # The following NN architectures are the ones introduced by Maurice Amendt.
-
-# DA MODIFICARE!!!!!!
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from keras.models import Model
 from keras.layers import Dense, Input, Dropout
-#from keras.constraints import clip_norm
-# from keras.layers.merge import concatenate
 from tensorflow.keras.layers import (
     concatenate,
-)  # PROBLEMA SEMBRA RISOLTO COSI !!!
+)  
 from keras.regularizers import l2, l1
 from sklearn.model_selection import KFold
 import numpy as np
@@ -22,15 +16,20 @@ import h5py
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
-def import_data(name):
-    with h5py.File(name, "r") as file:
-        # Ora puoi accedere ai dati all'interno del file
-        # Ad esempio, se ci sono gruppi o dataset nel file:
-        R = file["betas"]
-        R = R[()]
+def import_data(name):#-> Tuple[np.array, np.array]:
+    """imports data defined in a .mat file
 
-        U = file["U"]
-        U = U[()]
+    Args:
+        name : name of the file
+
+    Returns:
+        Tuple[np.array, np.array]: input and output of the NN
+    """
+    with h5py.File(name, "r") as file:
+        
+        R = file["betas"][()]
+
+        U = file["U"][()]
 
         # V=file['V']
         # V=V[()]
@@ -135,25 +134,25 @@ def getModel(params, name):
         inputs = Input(shape=(1,))
         hidden1 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(inputs)
         hidden2 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden1)
         hidden3 = Dense(
             64,
-            activation="tanh",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden2)
         hidden4 = Dense(
             64,
-            activation="tanh",
+            activation="sigmoid",
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden3)
@@ -167,7 +166,7 @@ def getModel(params, name):
         # and is thus responsible for capturing the linear correlations between the datasets
         hiddenlin = Dense(
             64,
-            activation="linear",
+            activation=custom_activation,
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
