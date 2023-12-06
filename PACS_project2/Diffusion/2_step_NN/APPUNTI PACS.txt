@@ -1,0 +1,50 @@
+UTILIZZO "RANDOM" STANDARD DEVIATION PER MCMC 
+
+hen you define the standard deviation (sd) of the normal distribution in a probabilistic way using a half-normal distribution, it means that the standard deviation is itself a random variable.
+
+The half-normal distribution is a continuous probability distribution for a real-valued random variable that is defined over the non-negative real numbers. It is the one-sided distribution corresponding to the normal distribution.
+
+The advantage of this approach is that it allows you to express your uncertainty about the standard deviation in a more flexible and principled way. This is especially useful when you have limited or uncertain information about the parameters of your model.
+
+On the other hand, if you were to define sd as a specific value (e.g., sd = 2.0), it would mean that you have certain knowledge about the standard deviation and it would not be treated as a random variable in your model. This could potentially lead to underestimation of uncertainty if your assumption about the standard deviation is incorrect.
+
+So, using a half-normal distribution for the standard deviation provides a more robust and flexible way to incorporate your uncertainty about the parameters of your model into your Bayesian inference.
+
+
+
+
+Ok, but which is the advantage of doing so, from a practical point of view?
+
+
+Using a half-normal distribution for the standard deviation allows you to:
+
+Model and propagate your uncertainty about the standard deviation: If you assume a normal distribution for the standard deviation, you can calculate and report credible intervals for your estimated standard deviation, providing a more informative summary of your uncertainty about this parameter.
+
+Avoid overfitting: By incorporating your uncertainty about the standard deviation into your model, you can prevent the model from overfitting the data. This can improve the model's ability to generalize to new data.
+
+Assess the sensitivity of your model to the standard deviation: By explicitly modeling the standard deviation as a random variable, you can investigate how sensitive your model is to changes in the standard deviation. This can provide valuable information for understanding the limits of your model and informing further analysis.
+
+Handle prior information about the standard deviation: If you have prior information about the standard deviation, you can incorporate this into your model using a half-normal distribution. This can lead to more accurate and efficient Bayesian inference compared to ignoring the prior information.
+
+So, while both approaches have their merits, using a half-normal distribution for the standard deviation can provide more robust and flexible tools for modeling and making inferences about your data.
+
+
+
+
+
+
+
+
+
+
+
+
+********************  # Diff: = 75  ********************
+LF NN done
+2/2 [==============================] - 0s 4ms/step
+
+LF Model:
+Test MSE: 0.03139298288013455
+R^2: 0.7539228767377495
+2/2 [==============================] - 0s 4ms/step
+1/1 [==============================] - 0s 31ms/step
