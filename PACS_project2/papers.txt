@@ -1,0 +1,2 @@
+https://msp.org/camcos/2010/5-1/p04.xhtml      diagnostica mcmc
+https://www.semanticscholar.org/paper/Monte-Carlo-Methods-in-Statistical-Mechanics%3A-and-Sokal/0bfe9e3db30605fe2d4d26e1a288a5e2997e7225?p2df       studio autocorrelation mcmc
