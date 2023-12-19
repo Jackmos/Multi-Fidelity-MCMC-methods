@@ -62,7 +62,7 @@ def getOpti(name, lr):
 
 def getModel(params, name):
     if name == "2step":
-        inputs = Input(shape=(2,))  # 4
+        inputs = Input(shape=(3,))  # 4
         ##NN_HF is a  shallow neural network consisting of a single layer:
         # hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         # hidden1=Dropout(0.5)(hidden1)
@@ -86,7 +86,7 @@ def getModel(params, name):
         # y_HF is the output
 
     elif name == "LF":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             64,
             activation=custom_activation,
@@ -118,7 +118,7 @@ def getModel(params, name):
         output = Dense(1, activation="linear", name="LF")(hidden4)
 
     elif name == "HF":
-        inputs = Input(shape=(1,))  # 4
+        inputs = Input(shape=(2,))  # 4
         hidden1 = Dense(
             64,
             activation=custom_activation,
@@ -131,7 +131,7 @@ def getModel(params, name):
         output = Dense(1, activation="linear", name="HF")(hidden1)
 
     elif name == "Single":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             64,
             activation=custom_activation,
@@ -160,7 +160,7 @@ def getModel(params, name):
 
     elif name == "Hflin":
         inputs = Input(
-            shape=(2,)
+            shape=(3,)
         )  # second NN (NN_Lin) in the 3-steps architecture
         # Linear activation function: it approximates the high-fidelity data by a linear combiantion of the inputs
         # and is thus responsible for capturing the linear correlations between the datasets
@@ -174,7 +174,7 @@ def getModel(params, name):
 
     elif name == "3step":
         inputs = Input(
-            shape=(3,)
+            shape=(4,)
         )  # third NN (NN_HF) in the 3-steps architecture
         hidden1 = Dense(
             int(params["nodes"]),
@@ -186,7 +186,7 @@ def getModel(params, name):
 
     elif name == "GP":
         # architecture which is supposed to mimic the action of a GP
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             int(params["nodes"]),
             activation=custom_activation,
@@ -233,7 +233,7 @@ def getModel(params, name):
         return model
 
     elif name == "Inter":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
 
         hidden1 = Dense(
             64, activation=custom_activation, kernel_initializer=params["kernel_init"]
