@@ -2,9 +2,11 @@
 
 Politecnico di Milano APSC Course project
 # Overview
-The considered dataset emulates the one used in the paper  "Multi fidelity reduced-order surrogate modeling"
+The considered dataset emulates the one used in the paper  "Multi fidelity reduced-order surrogate modeling".
+
 Each folder contains: 
-`2_step_NN\` - hyperparameters optimization and training of 2 steps Neural Network for 1 parameter (Young modulus) estimation
+
+`2_step_NN\` - hyperparameters optimization and training of 2 steps Neural Network 
 - `ann_functions` - collection of the functions used to train the NN
 - `HPO_2steps` - hyperparameters research
 - `NN_1param` - Neural Network model
@@ -12,9 +14,9 @@ Each folder contains:
 - `nnlf` - LF surrogate
 - 'finale\' - contains some of the outputs created which have relevance
 
-`3_step_NN\` - hyperparameters optimization and training of 3 steps Neural Network for 1 parameter (Young modulus) estimation
+`3_step_NN\` - hyperparameters optimization and training of 3 steps Neural Network 
 
-`Intermediate\` - hyperparameters optimization and training of Intermediate Neural Network for 1 parameter (Young modulus) estimation
+`Intermediate\` - hyperparameters optimization and training of Intermediate Neural Network 
 
 The considered cases are
 `Diffusion\`
