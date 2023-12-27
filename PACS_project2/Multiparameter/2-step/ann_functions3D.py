@@ -17,6 +17,11 @@ import h5py
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
+def  normalization(x):
+    return (x - np.min(x)) / (
+    np.max(x) - np.min(x)
+)
+
 def import_data(name):
     with h5py.File(name, "r") as file:
         # Ora puoi accedere ai dati all'interno del file
@@ -56,43 +61,44 @@ def getOpti(name,lr):
 
 def getModel(params,name):
     if(name == '2step'):
-        inputs = Input(shape=(5,))
+        inputs = Input(shape=(6,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(1,activation='linear',name='HF')(hidden1)
+        hidden2 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
+        output = Dense(1,activation='sigmoid',name='HF')(hidden2)
     elif (name == 'LF'):
-        inputs = Input(shape=(4,))
+        inputs = Input(shape=(5,))
         hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(inputs)
         hidden2 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden1)
         hidden3 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden2)
-        hidden4 = Dense(64,activation='sigmoid',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden3)
-        output = Dense(1,activation='linear',name='LF')(hidden4)
+        hidden4 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden3)
+        hidden5 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden4)
+        output = Dense(1,activation='sigmoid',name='LF')(hidden5)
     elif (name == 'HF'):
-        inputs = Input(shape=(4,))
+        inputs = Input(shape=(5,))
         hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(inputs)
         hidden1=Dropout(0.5)(hidden1)
-        output = Dense(1,activation='linear',name='LF')(hidden1) 
+        output = Dense(1,activation='sigmoid',name='LF')(hidden1) 
     elif (name == 'Single'):
-        inputs = Input(shape=(4,))
+        inputs = Input(shape=(5,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(inputs)
         hidden2 = Dense(int(params['nodes']),activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden1)
         #hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden2)
         #hidden4 = Dense(int(params['nodes']),activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden3)
-        output = Dense(1,activation='linear',name='Single')(hidden2)
+        output = Dense(1,activation='sigmoid',name='Single')(hidden2)
 
     elif (name == 'Hflin'):
-        inputs = Input(shape=(5,))
+        inputs = Input(shape=(6,))
         hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(1,activation='linear',name='HFlin')(hiddenlin)
+        output = Dense(1,activation='sigmoid',name='HFlin')(hiddenlin)
 
     elif(name == '3step'):
-        inputs = Input(shape=(6,))
+        inputs = Input(shape=(7,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(1,activation='linear',name='HF')(hidden1)
+        output = Dense(1,activation='sigmoid',name='HF')(hidden1)
 
     elif (name == 'GP'):
-        inputs = Input(shape=(4,))
+        inputs = Input(shape=(5,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
         hidden3 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
@@ -107,7 +113,7 @@ def getModel(params,name):
         return model
 
     elif (name == 'Inter'):
-        inputs = Input(shape=(4,))
+        inputs = Input(shape=(5,))
         hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2((1-params['alpha'])*params['l2weight']))(inputs)
         hidden2 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2((1-params['alpha'])*params['l2weight']))(hidden1)
         outputLF = Dense(1,activation=custom_activation,name='LF')(hidden2)
@@ -120,7 +126,7 @@ def getModel(params,name):
 
         #lincorr = Dense(int(params['nodes']),activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(outputLF)
         #merge2 = concatenate([hidden3,lincorr])
-        outputHF = Dense(1,activation='linear',name='HF')(hidden4)
+        outputHF = Dense(1,activation='sigmoid',name='HF')(hidden4)
         output = [outputHF,outputLF]
         model = Model(inputs=inputs, outputs=output)
         opti = getOpti(params['opt'],params['lr'])
