@@ -72,7 +72,7 @@ def getModel(params,name):
         hidden2 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden1)
         hidden3 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden2)
         hidden4 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden3)
-        output = Dense(1,activation='sigmoid',name='LF')(hidden4)
+        output = Dense(1,activation=custom_activation,name='LF')(hidden4)
     elif (name == 'HF'):
         inputs = Input(shape=(4,))
         hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(inputs)
@@ -88,14 +88,14 @@ def getModel(params,name):
 
     elif (name == 'Hflin'):
         inputs = Input(shape=(5,))
-        hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(1,activation='sigmoid',name='HFlin')(hiddenlin)
+        hiddenlin = Dense(64,activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
+        output = Dense(1,activation=custom_activation,name='HFlin')(hiddenlin)
 
     elif(name == '3step'):
         inputs = Input(shape=(6,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(1,activation='sigmoid',name='HF')(hidden1)
+        output = Dense(1,activation=custom_activation,name='HF')(hidden1)
 
     elif (name == 'GP'):
         inputs = Input(shape=(4,))

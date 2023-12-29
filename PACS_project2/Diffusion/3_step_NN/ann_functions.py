@@ -20,6 +20,13 @@ import h5py
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
+
+def  normalization(x):
+    return (x - np.min(x)) / (
+    np.max(x) - np.min(x)
+)
+
+
 def import_data(name):
     with h5py.File(name, "r") as file:
         # Ora puoi accedere ai dati all'interno del file
@@ -61,7 +68,7 @@ def getOpti(name, lr):
 
 def getModel(params, name):
     if name == "2step":
-        inputs = Input(shape=(2,))  #
+        inputs = Input(shape=(3,))  #
         # NN_HF is a  shallow neural network consisting of a single layer:
         hidden1 = Dense(
             int(params["nodes"]),
@@ -69,12 +76,13 @@ def getModel(params, name):
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
+        
         # hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(1, activation="linear", name="HF")(hidden1)
+        output = Dense(1, activation="sigmoid", name="HF")(hidden1)
         # y_HF is the output
 
     elif name == "LF":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(inputs)
@@ -85,12 +93,15 @@ def getModel(params, name):
             64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden2)
         hidden4 = Dense(
-            64, activation="sigmoid", kernel_initializer=params["kernel_init"]
+            64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden3)
-        output = Dense(1, activation="linear", name="LF")(hidden4)
+        # hidden5 = Dense(
+        #     64, activation=custom_activation, kernel_initializer=params["kernel_init"],kernel_regularizer=l2(0.01)
+        # )(hidden4)
+        output = Dense(1, activation="sigmoid", name="LF")(hidden4)
 
     elif name == "Single":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             64,
             activation=custom_activation,
@@ -111,7 +122,7 @@ def getModel(params, name):
         )(hidden2)
         hidden4 = Dense(
             64,
-            activation="sigmoid",
+            activation=custom_activation,
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden3)
@@ -119,13 +130,13 @@ def getModel(params, name):
 
     elif name == "Hflin":
         inputs = Input(
-            shape=(2,)
+            shape=(3,)
         )  # second NN (NN_Lin) in the 3-steps architecture
         # Linear activation function: it approximates the high-fidelity data by a linear combiantion of the inputs
         # and is thus responsible for capturing the linear correlations between the datasets
         hiddenlin = Dense(
             64,
-            activation="linear",
+            activation=custom_activation,
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
@@ -133,7 +144,7 @@ def getModel(params, name):
 
     elif name == "3step":
         inputs = Input(
-            shape=(3,)
+            shape=(4,)
         )  # third NN (NN_HF) in the 3-steps architecture
         hidden1 = Dense(
             int(params["nodes"]),
@@ -141,11 +152,17 @@ def getModel(params, name):
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
-        output = Dense(1, activation="linear", name="HF")(hidden1)
+        # hidden2 = Dense(
+        #     int(params["nodes"]),
+        #     activation=custom_activation,
+        #     kernel_regularizer=l2(params["l2weight"]),
+        #     kernel_initializer=params["kernel_init"],
+        # )(hidden1)
+        output = Dense(1, activation="sigmoid", name="HF")(hidden1)
 
     elif name == "GP":
         # architecture which is supposed to mimic the action of a GP
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
         hidden1 = Dense(
             int(params["nodes"]),
             activation="tanh",
@@ -192,7 +209,7 @@ def getModel(params, name):
         return model
 
     elif name == "Inter":
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(2,))
 
         hidden1 = Dense(
             64, activation="tanh", kernel_initializer=params["kernel_init"]
@@ -215,14 +232,14 @@ def getModel(params, name):
 
         hidden3 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation="sigmoid",
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(merge)
 
         hidden4 = Dense(
             int(params["nodes"]),
-            activation="tanh",
+            activation="sigmoid",
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden3)
@@ -235,7 +252,7 @@ def getModel(params, name):
         # lincorr = Dense(int(params['nodes']),activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(outputLF)
         # merge2 = concatenate([hidden3,lincorr])
 
-        outputHF = Dense(1, activation="linear", name="HF")(hidden4)
+        outputHF = Dense(1, activation="sigmoid", name="HF")(hidden4)
         output = [outputHF, outputLF]
         model = Model(inputs=inputs, outputs=output)
         opti = getOpti(params["opt"], params["lr"])

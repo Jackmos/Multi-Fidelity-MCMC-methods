@@ -1,1 +1,5 @@
-Discretization	Diffusion	MSE
+Discretization	Diffusion	MSE	diffusion
+10		0.15427539342674662	0.0
+10		0.140939588210866	5.0
+10		0.2947975157464948	75.0
+10		0.12789103179077016	1.0

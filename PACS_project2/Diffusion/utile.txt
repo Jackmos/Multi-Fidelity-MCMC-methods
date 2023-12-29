@@ -1,0 +1,54 @@
+
+CALLBACK IN KERAS
+
+
+I callback in Keras sono oggetti che possono essere passati come argomenti durante la fase di addestramento di un modello e che vengono chiamati in determinati punti durante il ciclo di addestramento. Questi callback offrono la possibilità di eseguire azioni specifiche durante l'addestramento, come l'aggiornamento di visualizzazioni in tempo reale, la modifica di iperparametri, l'interruzione anticipata dell'addestramento, la registrazione di metriche personalizzate, e molto altro.
+
+Ecco una panoramica dei principali callback incorporati in Keras e di come funzionano:
+
+ModelCheckpoint: Salva il modello a intervalli durante l'addestramento. Può essere utilizzato per salvare il modello con la miglior prestazione su un set di dati di convalida.
+
+python
+Copy code
+from keras.callbacks import ModelCheckpoint
+
+checkpoint = ModelCheckpoint('best_model.h5', monitor='val_loss', save_best_only=True)
+model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), callbacks=[checkpoint])
+EarlyStopping: Interrompe l'addestramento quando una metrica smette di migliorare per un numero specificato di epoche (patience).
+
+python
+Copy code
+from keras.callbacks import EarlyStopping
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), callbacks=[early_stopping])
+TensorBoard: Permette la registrazione dei log per l'utilizzo con TensorBoard per la visualizzazione in tempo reale dell'andamento dell'addestramento.
+
+python
+Copy code
+from keras.callbacks import TensorBoard
+
+tensorboard = TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=False)
+model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), callbacks=[tensorboard])
+ReduceLROnPlateau: Riduce il tasso di apprendimento quando una metrica smette di migliorare per un numero specificato di epoche.
+
+python
+Copy code
+from keras.callbacks import ReduceLROnPlateau
+
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=3, min_lr=0.0001)
+model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), callbacks=[reduce_lr])
+Custom Callbacks: Puoi anche creare i tuoi callback personalizzati estendendo la classe keras.callbacks.Callback e sovrascrivendo i metodi desiderati.
+
+python
+Copy code
+from keras.callbacks import Callback
+
+class CustomCallback(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        # Personalizza l'azione alla fine di ogni epoca
+        pass
+
+custom_callback = CustomCallback()
+model.fit(X_train, y_train, epochs=100, callbacks=[custom_callback])
+I callback sono chiamati in vari punti durante l'addestramento, come alla fine di ogni epoca (on_epoch_end), alla fine di ogni batch (on_batch_end), ecc. Puoi personalizzare il comportamento del tuo callback sovrascrivendo i metodi pertinenti della classe Callback.
