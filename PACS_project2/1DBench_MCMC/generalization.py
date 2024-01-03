@@ -12,6 +12,7 @@ from time import perf_counter
 import tensorflow as tf
 import sys
 import os
+import warnings
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Input
@@ -40,15 +41,26 @@ class Suppressor:
 
 class Neural_network:
     
-    #def __init__(self, data, labels, params, num_classes=10, verbose=False):
-    def __init__(self,params,name,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):
+    def __init__(self,name,params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):
         K.clear_session()
+        self.name=name
+        self.params=params
+        self.N=N    # epochs
+        self.n=n    # batch size    
         self.verbose=verbose
-        self.model = getModel(params,name)
-        if (do_HPO):
-            params=HPO()
+        if data_train is not None and len(data_train.shape) > 1:
+            shape_value = data_train.shape[1]
+        else:
+            shape_value = 1  
+
+        self.model = getModel(self.params,shape_value,self.name)
+        if (do_HPO or params is None):
+            if (output_train is None or data_train is None):
+                warning_message = "Not enough data given!"
+                warnings.warn(warning_message, UserWarning)
+            self.params=self.HPO(data_train,output_train)
         if(train):
-            self.model.fit(data_train,output_train,epochs=N,batch_size=n,verbose=0) 
+            self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
     
     def training(self,x,y,epoch,batch):
         # DUBBIO : va definita variabile hist?
@@ -61,23 +73,24 @@ class Neural_network:
             with Suppressor():
                 y_pred = self.model.predict(x_test)[:,0]
         return y_pred    
-    
-    def predict(self, x):
-        if (self.verbose):
-            y = self.model.predict(np.array([x]))[:,0]
-        else:
-            with Suppressor():
-                y = self.model.predict(np.array([x]))[:,0]
-        return y
 
-    def objective(self,params):
-        # wrapper
-        K.clear_session()
-        CVres = kCrossVal(n,N,data_train,output_train,params,name)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
-        return {"loss": CVres, "params": params, "status": STATUS_OK}
 
-    def HPO():
-        # wrapper
+    def performance(self,data_test,output_test):
+        pred=self.prediction(data_test)[:,0]
+        test_mse = np.mean(np.square(output_test - pred))
+        print(f"Test MSE: {test_mse}")
+
+        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
+            np.square(output_test - np.mean(output_test))
+        )
+        print(f"R^2: {r2}")
+        
+        return (test_mse,r2)
+
+
+
+    def HPO(self,data_train,output_train):
+
         MAX_EVAL = 15
 
         bayes_trials = Trials()
@@ -91,8 +104,14 @@ class Neural_network:
         "kernel_init": hp.choice("kernel_init", kernel_list),
         "opt": hp.choice("opt", opt_list),
         }
+        
+        def objective(self,params): 
 
-        best_params = fmin(fn = objective,
+            K.clear_session()
+            CVres = kCrossVal(self.n,self.N,data_train,output_train,params,self.name)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
+            return {"loss": CVres, "params": params, "status": STATUS_OK}
+
+        best_params = fmin(fn = self.objective,
                         space = space,
                         algo = tpe.suggest,
                         max_evals = MAX_EVAL,
@@ -101,12 +120,45 @@ class Neural_network:
         print(best_params)
         return best_params
 
-class MultiFidelity(Neural_network):
-    # idea: se rendi input in numeri variabili, puoi mettere assieme piu modelli in modo diverso e generico
-    # fai lista di nomi degli elementi che entrano (per evitare siano solo 2, cosi generalizzi alla 3 steps) 
-    # in ogni riga aggiungi colonna per prosecutio
-    
-    
+class MultiFidelity():
+   
+    def __init__(self,names,params=None,data_train=None,output_train=None,N=None,n=None,do_HPO=False,verbose=False):
+        # names: list of strings
+        # params: list of dictionaries
+        # N: list of epochs
+        # n: list of batch_sizes
+        self.names=names
+        self.Ns=N
+        self.ns=n
+        self.model_list = []
+        self.outputs = np.empty((0,0))
+        print('N')
+        print(self.Ns)
+        print(self.ns) 
+        
+        K.clear_session()
+        if len(params)<len(self.names):
+            diff = len(self.names) - len(params)
+            params += [None] * diff
+                        
+        for index, name in enumerate(self.names):  
+            model=Neural_network(name,params=params[index],data_train=data_train,output_train=output_train,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
+            self.model_list.append(model)
+            # self.outputs.append(model.prediction(self.outputs)) 
+            data_train=np.c_[data_train,model.prediction(data_train)]
+        
+    def prediction(self,data_test):
+        self.outputs = data_test
+        if(len(self.outputs.shape)==1):
+            self.outputs=self.outputs.reshape(-1,1)
+        for index, _ in enumerate(self.names):
+            print("check")
+            self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
+        return self.outputs[:,-1]
+            
+    def get_output(self):
+        return self.outputs[-1]
+
     
     
 def custom_loss(y_pred,y_true):
@@ -128,14 +180,14 @@ def getOpti(name,lr):
     elif name == 'standardadam':
         return 'adam'
 
-def getModel(params,name):
+def getModel(params,num_inputs,name):
     if(name == '2step'):
-        inputs = Input(shape=(2,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
         output = Dense(1,activation='linear',name='HF')(hidden1)   
     elif (name == 'LF'):
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
         hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden2)
@@ -143,7 +195,7 @@ def getModel(params,name):
         output = Dense(1,activation='linear',name='LF')(hidden4)
         
     elif (name == 'Single'):
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(inputs)
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden1)
         hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden2)
@@ -151,17 +203,17 @@ def getModel(params,name):
         output = Dense(1,activation='linear',name='Single')(hidden2)        
         
     elif (name == 'Hflin'):
-        inputs = Input(shape=(2,))
+        inputs = Input(shape=(num_inputs,))
         hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         output = Dense(1,activation='linear',name='HFlin')(hiddenlin)
         
     elif(name == '3step'):
-        inputs = Input(shape=(3,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         output = Dense(1,activation='linear',name='HF')(hidden1)   
         
     elif (name == 'GP'):
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
         hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
@@ -176,7 +228,7 @@ def getModel(params,name):
         return model
     
     elif (name == 'Inter'):
-        inputs = Input(shape=(1,))
+        inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
         outputLF = Dense(1,activation='linear',name='LF')(hidden2)
@@ -203,9 +255,9 @@ def getModel(params,name):
     return model
 
 
-def kCrossVal(N,Nepo,x,y,params,name):
+def kCrossVal(N,Nepo,x,y,params,num_inputs,name):
     #K.clear_session()
-    model = getModel(params,name)
+    model = getModel(params,num_inputs,name)
     score = np.zeros([N])
     cv = KFold(N)
     splits = cv.split(x)
@@ -221,11 +273,11 @@ def kCrossVal(N,Nepo,x,y,params,name):
       i = i+1
     return np.mean(score)
 
-def kCrossValSingle(N,Nepo,x,y,params,name):
+def kCrossValSingle(N,Nepo,x,y,params,num_inputs,name):
     score = np.zeros([N])
     cv = KFold(N)
     splits = cv.split(x)
-    model = getModel(params,name)
+    model = getModel(params,num_inputs,name)
     i=0
     for train_index, test_index in splits:
       x_train = x[train_index]
@@ -239,13 +291,13 @@ def kCrossValSingle(N,Nepo,x,y,params,name):
       i = i+1
     return np.mean(score)
 
-def kCrossValGP(Nhf,Nlf,Nepo,xhf,yhf,xlf,ylf,params,name):
+def kCrossValGP(Nhf,Nlf,Nepo,xhf,yhf,xlf,ylf,params,num_inputs,name):
     score = np.zeros([Nhf])
     cv = KFold(Nhf)
     splits = cv.split(xhf)
     i=0
     N = Nhf + Nlf
-    model = getModel(params,name)
+    model = getModel(params,num_inputs,name)
     for train_index, test_index in splits:
       xhf_train = xhf[train_index]
       yhf_train = yhf[train_index]
