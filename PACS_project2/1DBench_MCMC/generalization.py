@@ -24,10 +24,6 @@ from tensorflow.keras.optimizers import Adam,Nadam,Adamax, RMSprop
 import tensorflow.keras.backend as K
 import tensorflow as tf
 
-#######################################################################
-# rendere variabile il numero di input della rete in modo da evitare problemi in def classe
-######################################################################
-
 class Suppressor:
     # suppress the printed message
     def __enter__(self):
@@ -48,6 +44,8 @@ class Neural_network:
         self.N=N    # epochs
         self.n=n    # batch size    
         self.verbose=verbose
+        self.hist=None
+        
         if data_train is not None and len(data_train.shape) > 1:
             shape_value = data_train.shape[1]
         else:
@@ -60,12 +58,13 @@ class Neural_network:
                 warnings.warn(warning_message, UserWarning)
             self.params=self.HPO(data_train,output_train)
         if(train):
-            self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
+            self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
     
     def training(self,x,y,epoch,batch):
         # DUBBIO : va definita variabile hist?
-        self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
-
+        self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
+        return self.hist
+    
     def prediction(self,x_test):
         if(self.verbose):
             y_pred=self.model.predict(x_test)[:,0]
@@ -122,19 +121,18 @@ class Neural_network:
 
 class MultiFidelity():
    
-    def __init__(self,names,params=None,data_train=None,output_train=None,N=None,n=None,do_HPO=False,verbose=False):
+    def __init__(self,names,params=None,data_train_LF=None,output_train_LF=None,data_train_HF=None, output_train_HF=None,N=None,n=None,do_HPO=False,verbose=False):
         # names: list of strings
         # params: list of dictionaries
         # N: list of epochs
         # n: list of batch_sizes
+        # data_train: list of inputs
+        # output_train: list of outputs 
         self.names=names
         self.Ns=N
         self.ns=n
         self.model_list = []
         self.outputs = np.empty((0,0))
-        print('N')
-        print(self.Ns)
-        print(self.ns) 
         
         K.clear_session()
         if len(params)<len(self.names):
@@ -142,17 +140,21 @@ class MultiFidelity():
             params += [None] * diff
                         
         for index, name in enumerate(self.names):  
-            model=Neural_network(name,params=params[index],data_train=data_train,output_train=output_train,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
-            self.model_list.append(model)
+            if(name=='LF'):
+                model=Neural_network(name,params=params[index],data_train=data_train_LF,output_train=output_train_LF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
+                self.model_list.append(model)
+            else:
+                model=Neural_network(name,params=params[index],data_train=data_train_HF,output_train=output_train_HF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
+                self.model_list.append(model)
             # self.outputs.append(model.prediction(self.outputs)) 
-            data_train=np.c_[data_train,model.prediction(data_train)]
+            data_train_HF=np.c_[data_train_HF,model.prediction(data_train_HF)]     # caso con LF di seguito non è mai capitato finora
         
     def prediction(self,data_test):
         self.outputs = data_test
         if(len(self.outputs.shape)==1):
             self.outputs=self.outputs.reshape(-1,1)
         for index, _ in enumerate(self.names):
-            print("check")
+            #print("check")
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
         return self.outputs[:,-1]
             
