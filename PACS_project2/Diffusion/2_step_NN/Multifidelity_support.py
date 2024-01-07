@@ -2,6 +2,7 @@ from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
 from hyperopt.pyll.stochastic import sample
 from hyperopt.pyll.base import scope
 from sklearn.model_selection import KFold
+from keras.models import save_model
 import numpy as np
 from matplotlib import pyplot as plt
 from ann_functions import getModel, kCrossVal, transfBestparam
@@ -24,6 +25,11 @@ import sys
 import os
 import warnings
 
+from cuqi.distribution import Uniform, Gaussian,JointDistribution
+from cuqi.sampler import MH
+from cuqi.model import Model as CuqiModel
+from cuqi.geometry import Continuous1D, Discrete
+
 class Suppressor:
     # suppress the printed message
     def __enter__(self):
@@ -45,18 +51,21 @@ class Neural_network:
         self.n=n    # batch size    
         self.verbose=verbose
         self.hist=None
+        self.data_train=data_train
+        self.output_train=output_train
         
         if data_train is not None and len(data_train.shape) > 1:
-            shape_value = data_train.shape[1]
+            self.shape_value = data_train.shape[1]
         else:
-            shape_value = 1  
+            self.shape_value = 1  
 
-        self.model = getModel(self.params,shape_value,self.name)
         if (do_HPO or params is None):
             if (output_train is None or data_train is None):
                 warning_message = "Not enough data given!"
                 warnings.warn(warning_message, UserWarning)
             self.params=self.HPO(data_train,output_train)
+        self.model = getModel(self.params,self.shape_value,self.name)
+
         if(train):
             self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
             plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
@@ -79,10 +88,14 @@ class Neural_network:
                 y_pred = self.model.predict(x_test)[:,0]
         return y_pred    
 
+    def save(self):
+        print("saving the model ...")
+        save_model(self.model,f"{self.name}_model.h5")
+
 
     def performance(self,data_test,output_test):
         pred=self.prediction(data_test)#[:,0]
-        print(pred.shape)
+        #print(pred.shape)
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
 
@@ -93,6 +106,31 @@ class Neural_network:
         
         return (test_mse,r2)
 
+    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
+        
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation()    
     # def mse_plot(self,val):
     #     plt.plot(self.model.history.history['loss'][val:], label='Training Loss')
     #     plt.title('Mean Squared Error (MSE) over Epochs')
@@ -100,7 +138,11 @@ class Neural_network:
     #     plt.ylabel('MSE')
     #     plt.legend()
     #     plt.show()
-        
+    def objective(self,par): 
+        #print(self.name)
+        K.clear_session()
+        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.shape_value)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
+        return {"loss": CVres, "params": par, "status": STATUS_OK}   
 
 
     def HPO(self,data_train,output_train):
@@ -118,12 +160,6 @@ class Neural_network:
         "kernel_init": hp.choice("kernel_init", kernel_list),
         "opt": hp.choice("opt", opt_list),
         }
-        
-        def objective(self,params): 
-
-            K.clear_session()
-            CVres = kCrossVal(self.n,self.N,data_train,output_train,params,self.name)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
-            return {"loss": CVres, "params": params, "status": STATUS_OK}
 
         best_params = fmin(fn = self.objective,
                         space = space,
@@ -131,6 +167,9 @@ class Neural_network:
                         max_evals = MAX_EVAL,
                         trials = bayes_trials)
         transfBestparam(best_params, aux_dic)
+        #self.params=best_params
+        
+        print("Best parameters from the HPO:")
         print(best_params)
         return best_params
 
@@ -172,6 +211,37 @@ class MultiFidelity():
             #print("check")
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
         return self.outputs[:,-1]
+ 
+    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
+        
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation() 
+    
+    def save(self):
+        print("Saving ...")
+        for index, _ in enumerate(self.model_list):
+            save_model(self.model_list[index].model,f"{self.names[index]}_model.h5")
             
     def get_output(self):
         return self.outputs[-1]
@@ -259,8 +329,8 @@ def add_noise(noise_std_data, noise_sta_output, data, output):
         temp1=output+noise_1
         temp2=data+noise_2
         output_flag=np.concatenate((output_flag,temp1),axis=0)
-        print(data_flag.shape)
-        print(temp2.shape)
+        #print(data_flag.shape)
+        #print(temp2.shape)
         data_flag=np.concatenate((data_flag,temp2))
     return (output_flag,data_flag)
 
@@ -515,11 +585,33 @@ def getModel(params,num_inputs, name):
     return model
 
 
-def kCrossValSingle(N, Nepo, x, y, params, name):
+def kCrossVal(N, Nepo, x, y, params, name,shape_value):
+    # K.clear_session()
+    #print(name)
+    model = getModel(params,shape_value, name)
     score = np.zeros([N])
     cv = KFold(N)
     splits = cv.split(x)
-    model = getModel(params, name)
+    i = 0
+    for train_index, test_index in splits:
+        x_train = x[train_index, :]
+        y_train = y[train_index]
+        x_val = x[test_index, :]
+        y_val = y[test_index]
+        # model = getModel(params,name)
+        model.fit(x_train, y_train, epochs=Nepo, batch_size=N - 1, verbose=0)
+        score[i] = np.square(y_val - model.predict(x_val))
+        i = i + 1
+    return np.mean(score)
+
+
+
+
+def kCrossValSingle(N, Nepo, x, y, params, name,shape_value):
+    score = np.zeros([N])
+    cv = KFold(N)
+    splits = cv.split(x)
+    model = getModel(params,shape_value, name)
     i = 0
     for train_index, test_index in splits:
         x_train = x[train_index]
@@ -532,13 +624,13 @@ def kCrossValSingle(N, Nepo, x, y, params, name):
     return np.mean(score)
 
 
-def kCrossValGP(Nhf, Nlf, Nepo, xhf, yhf, xlf, ylf, params, name):
+def kCrossValGP(Nhf, Nlf, Nepo, xhf, yhf, xlf, ylf, params, name,shape_value):
     score = np.zeros([Nhf])
     cv = KFold(Nhf)
     splits = cv.split(xhf)
     i = 0
     N = Nhf + Nlf
-    model = getModel(params, name)
+    model = getModel(params,shape_value, name)
     for train_index, test_index in splits:
         xhf_train = xhf[train_index]
         yhf_train = yhf[train_index]
