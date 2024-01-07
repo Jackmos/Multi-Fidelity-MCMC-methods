@@ -1,28 +1,27 @@
 import tensorflow.keras.backend as K
 from tensorflow.keras.regularizers import l2
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Input, concatenate
+from tensorflow.keras.optimizers import Adam,Nadam,Adamax
+import tensorflow as tf
+
 from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
 from hyperopt.pyll.stochastic import sample
 from hyperopt.pyll.base import scope
 from sklearn.model_selection import KFold
 import numpy as np
 from matplotlib import pyplot as plt
-from tensorflow.keras.optimizers import Adam,Nadam,Adamax
 from ann_functions import getModel, kCrossVal, transfBestparam
 from time import perf_counter
-import tensorflow as tf
 import sys
 import os
 import warnings
 
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Input
-from tensorflow.keras.layers import concatenate
-from tensorflow.keras.regularizers import l2
-from sklearn.model_selection import KFold
-import numpy as np
-from tensorflow.keras.optimizers import Adam,Nadam,Adamax, RMSprop
-import tensorflow.keras.backend as K
-import tensorflow as tf
+from cuqi.distribution import Uniform, Gaussian,JointDistribution
+from cuqi.sampler import MH
+from cuqi.model import Model
+from cuqi.geometry import Continuous1D, Discrete
+
 
 class Suppressor:
     # suppress the printed message
@@ -158,8 +157,37 @@ class MultiFidelity():
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
         return self.outputs[:,-1]
             
+    #---------------------------------------------
+    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=Model(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
+        
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation()
+    #------------------------------------------        
+            
     def get_output(self):
         return self.outputs[-1]
+    
 
     
     
