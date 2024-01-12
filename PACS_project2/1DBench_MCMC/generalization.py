@@ -19,7 +19,7 @@ import warnings
 
 from cuqi.distribution import Uniform, Gaussian,JointDistribution
 from cuqi.sampler import MH
-from cuqi.model import Model
+from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
 
 
@@ -167,7 +167,7 @@ class MultiFidelity():
             x_init=np.zeros(dim)
         elif isinstance(x_init, (int, float)):
             x_init=x_init*np.ones(dim)
-        A=Model(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
         x=Uniform(np.zeros(dim),np.ones(dim))
         y=Gaussian(mean=A(x),cov=proposal_sd)
         # y_obs=y(x=real_x).sample()
@@ -279,7 +279,7 @@ def getModel(params,num_inputs,name):
         return model
  
         
-    model = Model(inputs=inputs, outputs=output)
+    model = Model(inputs=inputs,  outputs=output)
     opti = getOpti(params['opt'],params['lr'])
     model.compile(loss='mse',optimizer=opti,metrics=['mse'])
     return model

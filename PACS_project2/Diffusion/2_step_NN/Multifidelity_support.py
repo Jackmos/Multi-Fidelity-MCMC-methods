@@ -147,7 +147,7 @@ class Neural_network:
 
     def HPO(self,data_train,output_train):
 
-        MAX_EVAL = 15
+        MAX_EVAL = 5
 
         bayes_trials = Trials()
         opt_list = ["Adam", "Adamax"]
