@@ -67,6 +67,10 @@ class Neural_network:
         self.model = getModel(self.params,self.shape_value,self.name)
 
         if(train):
+            print(data_train)
+            print(output_train)
+            print(self.N)
+            print(self.n)
             self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
             plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
             plt.title('Mean Squared Error (MSE) over Epochs')
@@ -85,7 +89,7 @@ class Neural_network:
             y_pred=self.model.predict(x_test)[:,0]
         else:
             with Suppressor():
-                y_pred = self.model.predict(x_test)[:,0]
+                y_pred = self.model.predict(x_test)#[:,0]
         return y_pred    
 
     def save(self):
@@ -198,6 +202,7 @@ class MultiFidelity():
                 model=Neural_network(name,params=params[index],data_train=data_train_LF,output_train=output_train_LF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
                 self.model_list.append(model)
             else:
+                print(n)
                 model=Neural_network(name,params=params[index],data_train=data_train_HF,output_train=output_train_HF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
                 self.model_list.append(model)
             # self.outputs.append(model.prediction(self.outputs)) 
@@ -543,7 +548,7 @@ def getModel(params,num_inputs, name):
         hidden2 = Dense(
             64, activation=custom_activation, kernel_initializer=params["kernel_init"]
         )(hidden1)
-        outputLF = Dense(1, activation=custom_activation, name="LF")(
+        outputLF = Dense(1, activation='linear', name="LF")(
             hidden2
         )  # low-fidelity output is situate at the third hidden layer.
         outputadd = Dense(
@@ -552,7 +557,7 @@ def getModel(params,num_inputs, name):
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden2)
-        merge = kr.merge.concatenate([outputLF, outputadd])
+        merge = kr.layers.concatenate([outputLF, outputadd])
 
         hidden3 = Dense(
             int(params["nodes"]),
@@ -568,7 +573,7 @@ def getModel(params,num_inputs, name):
             kernel_initializer=params["kernel_init"],
         )(hidden3)
 
-        outputHF = Dense(1, activation="sigmoid", name="HF")(hidden4)
+        outputHF = Dense(1, activation="linear", name="HF")(hidden4)
         output = [outputHF, outputLF]
         model = Model(inputs=inputs, outputs=output)
         opti = getOpti(params["opt"], params["lr"])
