@@ -3,3 +3,5 @@ https://www.semanticscholar.org/paper/Monte-Carlo-Methods-in-Statistical-Mechani
 Neural Networks Fail to Learn Periodic Functions and How to Fix It https://arxiv.org/pdf/2006.08195.pdf
 https://tik-db.ee.ethz.ch/file/2c0930b9e181fb0884ea5fbc2a659118/ -> funzioni di attivazione per funzioni periodiche 
 Geweke, J. (1992). Evaluating the accuracy of sampling‐based approaches to the calculation of posterior moments. In Bayesian Statistics 4, Bernardo, J. M., Berger, J. O., Dawid, A. P. and Smith, A. F. M. (eds.), 169‐193. Oxford: Oxford University Press. -> geweke test, mcmc, cuqipy
+
+https://jellis18.github.io/post/2018-01-02-mcmc-part1/ -> tuning mcmc

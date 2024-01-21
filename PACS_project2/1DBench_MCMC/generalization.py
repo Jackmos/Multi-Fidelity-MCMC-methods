@@ -4,6 +4,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Input, concatenate
 from tensorflow.keras.optimizers import Adam,Nadam,Adamax
 import tensorflow as tf
+import arviz
 
 from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
 from hyperopt.pyll.stochastic import sample
@@ -17,10 +18,11 @@ import sys
 import os
 import warnings
 
-from cuqi.distribution import Uniform, Gaussian,JointDistribution
-from cuqi.sampler import MH
+from cuqi.distribution import Uniform, Gaussian,JointDistribution, Beta
+from cuqi.sampler import MH,NUTS
 from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
+#from cuqi.diagnostics import Geweke
 
 
 class Suppressor:
@@ -33,6 +35,45 @@ class Suppressor:
         sys.stdout.close()
         sys.stdout = self._stdout
 
+class Function:
+    def __init__(self, func):
+        """
+        Initialize the class with a given function.
+
+        Parameters:
+        - func: The function for which we want to compute the Jacobian.
+        """
+        self.func = func
+
+    def compute_jacobian(self, x):
+        """
+        Compute the Jacobian matrix for the given point x.
+
+        Parameters:
+        - x: The point at which to compute the Jacobian.
+
+        Returns:
+        - The Jacobian matrix.
+        """
+        x = np.atleast_1d(x).astype(float)
+        n = len(x)
+        m = len(self.func(x))
+
+        jacobian = np.zeros((m, n))
+
+        for i in range(n):
+            x_copy1 = x.copy()
+            x_copy2 = x.copy()
+
+            # Perturb the i-th element
+            h = 1e-8
+            x_copy1[i] += h
+            x_copy2[i] -= h
+
+            # Compute partial derivative using finite difference
+            jacobian[:, i] = (self.func(x_copy1) - self.func(x_copy2)) / (2 * h)
+
+        return jacobian
 
 class Neural_network:
     
@@ -73,7 +114,7 @@ class Neural_network:
         return y_pred    
 
 
-    def performance(self,data_test,output_test):
+    def performance(self,data_test,output_test):   # to correct in case of inntermediate
         pred=self.prediction(data_test)[:,0]
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
@@ -117,6 +158,32 @@ class Neural_network:
         transfBestparam(best_params, aux_dic)
         print(best_params)
         return best_params
+    
+    def inverse(self, y_obs=None, x_real=None,number_chains=1, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True, algo="MH"):
+        
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        
+            
+        A=CuqiModel(forward=self.prediction,jacobian=Function(self.prediction).compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        #x=Uniform(np.zeros(dim),np.ones(dim))
+        x=Beta(np.ones(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        if(y_obs is None):
+            y_obs=y(x=x_real).sample()
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
+
+        
+        return MCMC(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo)
 
 class MultiFidelity():
    
@@ -158,36 +225,143 @@ class MultiFidelity():
         return self.outputs[:,-1]
             
     #---------------------------------------------
-    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-        dim=y_obs.shape[0]
+    def inverse(self, y_obs=None, x_real=None,number_chains=1, N=1000, burn_in=500, proposal_sd=0.3,diagnostic=True,algo="MH"):
+        
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
         if (N<=burn_in):
                 warning_message = "number of steps insufficient, smaller or equal than burn-in"
                 warnings.warn(warning_message, UserWarning)        
-        if (x_init is None):
-            x_init=np.zeros(dim)
-        elif isinstance(x_init, (int, float)):
-            x_init=x_init*np.ones(dim)
-        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        # if (x_init is None):
+        #     x_init=np.random.rand()*np.ones(dim)  # per varianza meglio mettere punto inizio sempre diverso
+        #elif isinstance(x_init, (int, float)):
+        #    x_init=x_init*np.ones(dim)
+            
+        A=CuqiModel(forward=self.prediction,jacobian=Function(self.prediction).compute_jacobian,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
         x=Uniform(np.zeros(dim),np.ones(dim))
         y=Gaussian(mean=A(x),cov=proposal_sd)
-        # y_obs=y(x=real_x).sample()
-        posterior=JointDistribution(y,x)(y=y_obs)
+        if(y_obs is None):
+            y_obs=y(x=x_real).sample()
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
         
-        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        samples=sampler.sample_adapt(N-burn_in,burn_in)
-        
-        if(diagnostic is True):
-            samples.plot_trace()
-            mean=samples.mean()
-            print(f"Mean values= {mean}")
-            ESS=samples.compute_ess()
-            print(f"ESS= {ESS}")
-            samples.plot_autocorrelation()
-    #------------------------------------------        
+        return MCMC(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo)
+ 
+    #------------------------------------------     
             
     def get_output(self):
         return self.outputs[-1]
     
+    
+def MCMC(y,x,observation, N, burn_in, n=1, diagnostic=True,algo="MH"):
+    
+    x_init=np.random.rand(observation.shape[0],n)
+        
+    estimates=np.empty((observation.shape[0],0))
+    ESSs=np.empty((observation.shape[0],0))
+    #Geweke=np.empty((x_init.shape[0],0))
+    #Rhat=np.empty((observation.shape[0],0))
+
+    chains=np.empty((0,observation.shape[0],N-burn_in))
+    #chains=np.empty((observation.shape[0],N-burn_in))
+    post=np.empty((observation.shape[0],0))
+    posterior=JointDistribution(y,x)(y=observation)
+
+    for i in range(n):
+        
+        if algo=="NUTS":
+            sampler=NUTS(posterior,x0=x_init[:,i])
+        else:
+            sampler=MH(posterior,x0=x_init[:,i])
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        estimates=np.column_stack((estimates,samples.mean()[:, np.newaxis]))
+       # ESSs=np.column_stack((ESSs,samples.compute_ess()[:, np.newaxis]))
+  #      Rhat=np.column_stack((Rhat,samples.compute_rhat()[:, np.newaxis]))
+        #print(Geweke)
+        #Geweke=np.column_stack((Geweke,samples.diagnostics()[:, np.newaxis][0]))
+                # chains=np.concatenate(chains, samplesMH_LF.samples)
+        
+        chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
+        #chains=np.vstack((chains, samples.samples))
+        
+        post=np.concatenate((post,samples.samples),axis=1)
+        print(                f"********************  # Mean values = {estimates.mean(axis=1)}  ********************"
+                )
+        # print(                f"********************  # ESS values = {ESSs.mean(axis=1)}  ********************"
+        #         )
+        # print(                f"********************  # Rhat values = {Rhat.mean(axis=1)}  ********************"
+        #         )
+     #   print(                f"********************  # Geweke values = {Geweke.mean(axis=1)}  ********************"
+      #          )
+          
+    if(diagnostic is True):
+        if(n==1):
+            samples.plot_trace()
+            samples.plot_autocorrelation()
+        else:
+            num_bins=10
+            for num in range(post.shape[0]):        
+                
+                bin_edges = np.linspace(np.min(post[num,:]), np.max(post[num,:]), num_bins + 1)
+                hist, _ = np.histogram(post, bins=bin_edges)
+                hist=hist/post.shape[1]
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                plt.figure()
+                plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
+
+                plt.xlabel('Value')
+                plt.ylabel('Probability')
+                plt.title('Distribution')
+                plt.legend()
+                plt.show()
+                
+            #autocorr=arviz.autocorr(chains[0,:])
+            autocov=arviz.autocov(chains[:,0,:])
+            ess=arviz.ess(chains[:,0,:])
+            print(                f"********************  # ESS values = {ess}  ********************"
+                )
+            #print(autocov)
+            #print(autocorr)
+            # plt.figure()
+            # plt.plot(autocorr[0,:])
+            # plt.title('Autocorrelation first chain')
+            # plt.xlabel('Lag')
+            # plt.ylabel('Autocorrelation')
+            # plt.legend()
+            # plt.show()
+
+            plt.figure()
+            plt.plot(autocov[0,:])
+            plt.title('Autocovariance first chain')
+            plt.xlabel('Lag')
+            plt.ylabel('Autocovariance')
+            plt.legend()
+            plt.show()
+            
+            # plt.figure()
+            # plt.plot(autocorr.mean(axis=0))
+            # plt.title('Autocorrelation')
+            # plt.xlabel('Lag')
+            # plt.ylabel('Autocorrelation')
+            # plt.legend()
+            # plt.show()
+
+            # plt.figure()
+            # plt.plot(autocov.mean(axis=0))
+            # plt.title('Autocovariance')
+            # plt.xlabel('Lag')
+            # plt.ylabel('Autocovariance')
+            # plt.legend()
+            # plt.show()
+            
+            
+    
+    return estimates
 
     
     
