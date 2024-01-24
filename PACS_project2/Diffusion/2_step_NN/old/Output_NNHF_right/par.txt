@@ -1,1 +1,0 @@
-{'kernel_init': 'uniform', 'l2weight': 10.392613840346135, 'lr': 0.0011344271049037492, 'nodes': 14.0, 'opt': 'Adam'}
