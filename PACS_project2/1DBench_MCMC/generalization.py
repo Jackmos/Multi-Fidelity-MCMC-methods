@@ -248,7 +248,7 @@ class MultiFidelity():
         if(y_obs is None):
             y_obs=y(x=x_real).sample()
         else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
+            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
         
         return MCMC(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo)
  
