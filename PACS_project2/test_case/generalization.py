@@ -23,6 +23,9 @@ from cuqi.sampler import MH,NUTS
 from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
 #from cuqi.diagnostics import Geweke
+import tinyDA as tda
+from scipy.stats import multivariate_normal
+import arviz as az
 
 
 class Suppressor:
@@ -159,8 +162,8 @@ class Neural_network:
         print(best_params)
         return best_params
     
-    def inverse(self, y_obs=None, x_real=None,number_chains=1, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True, algo="MH"):
-        
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True):
+    
         if x_real is not None:
             dim = x_real.shape[0]
         elif y_obs is not None:
@@ -172,18 +175,31 @@ class Neural_network:
                 warning_message = "number of steps insufficient, smaller or equal than burn-in"
                 warnings.warn(warning_message, UserWarning)        
         
+        if(cov_prior is None):
+            cov_prior=mean_prior*0.2
+        if(cov_likelihood is None):
+            cov_likelihood=cov_noise*np.eye(x_real.shape[0])
             
-        A=CuqiModel(forward=self.prediction,jacobian=Function(self.prediction).compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-        #x=Uniform(np.zeros(dim),np.ones(dim))
-        x=Beta(np.ones(dim),np.ones(dim))
-        y=Gaussian(mean=A(x),cov=proposal_sd)
-        if(y_obs is None):
-            y_obs=y(x=x_real).sample()
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
-
+        my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
         
-        return MCMC(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo)
+        if(y_obs is None):
+            y_obs=self.prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
+        
+        my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=x_real.shape[0]), cov_likelihood)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.prediction)
+        
+        print(f"real values are {x_real}")
+        
+        if(rwmh_cov is None):
+            rwmh_cov = np.eye(len(x_real))
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
+        
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.prediction(estimates), self.prediction(x_real))
+        
+        return estimates
 
 class MultiFidelity():
    
@@ -225,7 +241,7 @@ class MultiFidelity():
         return self.outputs[:,-1]
             
     #---------------------------------------------
-    def inverse(self, y_obs=None, x_real=None,number_chains=1, N=1000, burn_in=500, proposal_sd=0.3,diagnostic=True,algo="MH"):
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True):
         
         if x_real is not None:
             dim = x_real.shape[0]
@@ -237,132 +253,101 @@ class MultiFidelity():
         if (N<=burn_in):
                 warning_message = "number of steps insufficient, smaller or equal than burn-in"
                 warnings.warn(warning_message, UserWarning)        
-        # if (x_init is None):
-        #     x_init=np.random.rand()*np.ones(dim)  # per varianza meglio mettere punto inizio sempre diverso
-        #elif isinstance(x_init, (int, float)):
-        #    x_init=x_init*np.ones(dim)
+        
+        if(cov_prior is None):
+            cov_prior=mean_prior*0.2
+        if(cov_likelihood is None):
+            cov_likelihood=cov_noise*np.eye(x_real.shape[0])
             
-        A=CuqiModel(forward=self.prediction,jacobian=Function(self.prediction).compute_jacobian,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-        x=Uniform(np.zeros(dim),np.ones(dim))
-        y=Gaussian(mean=A(x),cov=proposal_sd)
+        my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
+        
         if(y_obs is None):
-            y_obs=y(x=x_real).sample()
+            y_obs=self.prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
         else:
             y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
         
-        return MCMC(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo)
- 
+        my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=dim), cov_likelihood)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.prediction)
+        
+        print(f"real values are {x_real}")
+        
+        if(rwmh_cov is None):
+            rwmh_cov = np.eye(len(x_real))
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
+        
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.prediction(estimates), self.prediction(x_real))
+        
+        return estimates
     #------------------------------------------     
             
     def get_output(self):
         return self.outputs[-1]
     
     
-def MCMC(y,x,observation, N, burn_in, n=1, diagnostic=True,algo="MH"):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False):
     
-    x_init=np.random.rand(observation.shape[0],n)
+    
+    my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
+    idata = tda.to_inference_data(my_chains, burnin=burnin)
+    estimates=np.array(az.summary(idata)['mean'])
+    print(f"estimated values are {estimates}")
+    if (diagnostic is True):
+        print(az.summary(idata))
+        az.plot_trace(idata)
+        print("Autocorrelation...")
+        az.plot_autocorr(idata)
+        #az.plot_violin(idata)
         
-    estimates=np.empty((observation.shape[0],0))
-    ESSs=np.empty((observation.shape[0],0))
-    #Geweke=np.empty((x_init.shape[0],0))
-    #Rhat=np.empty((observation.shape[0],0))
-
-    chains=np.empty((0,observation.shape[0],N-burn_in))
-    #chains=np.empty((observation.shape[0],N-burn_in))
-    post=np.empty((observation.shape[0],0))
-    posterior=JointDistribution(y,x)(y=observation)
-
-    for i in range(n):
-        
-        if algo=="NUTS":
-            sampler=NUTS(posterior,x0=x_init[:,i])
-        else:
-            sampler=MH(posterior,x0=x_init[:,i])
-        samples=sampler.sample_adapt(N-burn_in,burn_in)
-        estimates=np.column_stack((estimates,samples.mean()[:, np.newaxis]))
-       # ESSs=np.column_stack((ESSs,samples.compute_ess()[:, np.newaxis]))
-  #      Rhat=np.column_stack((Rhat,samples.compute_rhat()[:, np.newaxis]))
-        #print(Geweke)
-        #Geweke=np.column_stack((Geweke,samples.diagnostics()[:, np.newaxis][0]))
-                # chains=np.concatenate(chains, samplesMH_LF.samples)
-        
-        chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
-        #chains=np.vstack((chains, samples.samples))
-        
-        post=np.concatenate((post,samples.samples),axis=1)
-        print(                f"********************  # Mean values = {estimates.mean(axis=1)}  ********************"
-                )
-        # print(                f"********************  # ESS values = {ESSs.mean(axis=1)}  ********************"
-        #         )
-        # print(                f"********************  # Rhat values = {Rhat.mean(axis=1)}  ********************"
-        #         )
-     #   print(                f"********************  # Geweke values = {Geweke.mean(axis=1)}  ********************"
-      #          )
-          
-    if(diagnostic is True):
-        if(n==1):
-            samples.plot_trace()
-            samples.plot_autocorrelation()
-        else:
-            num_bins=10
-            for num in range(post.shape[0]):        
-                
-                bin_edges = np.linspace(np.min(post[num,:]), np.max(post[num,:]), num_bins + 1)
-                hist, _ = np.histogram(post, bins=bin_edges)
-                hist=hist/post.shape[1]
-                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                plt.figure()
-                plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
-
-                plt.xlabel('Value')
-                plt.ylabel('Probability')
-                plt.title('Distribution')
-                plt.legend()
-                plt.show()
-                
-            #autocorr=arviz.autocorr(chains[0,:])
-            autocov=arviz.autocov(chains[:,0,:])
-            ess=arviz.ess(chains[:,0,:])
-            print(                f"********************  # ESS values = {ess}  ********************"
-                )
-            #print(autocov)
-            #print(autocorr)
-            # plt.figure()
-            # plt.plot(autocorr[0,:])
-            # plt.title('Autocorrelation first chain')
-            # plt.xlabel('Lag')
-            # plt.ylabel('Autocorrelation')
-            # plt.legend()
-            # plt.show()
-
-            plt.figure()
-            plt.plot(autocov[0,:])
-            plt.title('Autocovariance first chain')
-            plt.xlabel('Lag')
-            plt.ylabel('Autocovariance')
-            plt.legend()
-            plt.show()
-            
-            # plt.figure()
-            # plt.plot(autocorr.mean(axis=0))
-            # plt.title('Autocorrelation')
-            # plt.xlabel('Lag')
-            # plt.ylabel('Autocorrelation')
-            # plt.legend()
-            # plt.show()
-
-            # plt.figure()
-            # plt.plot(autocov.mean(axis=0))
-            # plt.title('Autocovariance')
-            # plt.xlabel('Lag')
-            # plt.ylabel('Autocovariance')
-            # plt.legend()
-            # plt.show()
-            
-            
     
     return estimates
 
+def plot_hist(estimates, real_x, output1,output2):   
+    values2=estimates
+    values1=real_x
+    values = np.vstack((values1, values2))
+
+    # Creare categorie in base alla lunghezza di values
+    categories = np.arange(1, values.shape[1] + 1)
+
+    # Larghezza delle colonne
+    bar_width = 0.35
+
+    # Posizioni delle colonne
+    bar_positions = [categories - bar_width/2 + i*bar_width for i in range(values.shape[0])]
+    plt.figure()
+    # Creazione del plot
+    for i in range(values.shape[0]):
+        plt.bar(bar_positions[i], values[i, :], width=bar_width)
+
+
+    plt.ylabel('Value')
+    plt.title('Input')
+    plt.xticks(categories)
+    plt.legend(["Real value", "Estimate"])
+
+
+    # Mostra il plot
+    plt.show()
+    
+    values2 = output2
+    values1=output1
+
+    values = np.vstack((values1, values2))
+
+    # Creazione del plot
+    for i in range(values.shape[0]):
+        plt.bar(bar_positions[i], values[i, :], width=bar_width)
+
+
+    plt.ylabel('Value')
+    plt.title('Output')
+    plt.xticks(categories)
+    plt.legend(["Real value", "Estimate"])
+    # Mostra il plot
+    plt.show()
+    return
     
     
 def custom_loss(y_pred,y_true):
