@@ -26,7 +26,17 @@ from cuqi.geometry import Continuous1D, Discrete
 import tinyDA as tda
 from scipy.stats import multivariate_normal
 import arviz as az
+import time 
 
+def compute_time(function):
+    def wrapper(*args, **kwargs):
+        init = time.time()
+        res = function(*args, **kwargs)
+        end = time.time()
+        timespam = end - init
+        print(f"The function {function.__name__} took {timespam} seconds.")
+        return res
+    return wrapper
 
 class Suppressor:
     # suppress the printed message
@@ -101,8 +111,10 @@ class Neural_network:
                 warnings.warn(warning_message, UserWarning)
             self.params=self.HPO(data_train,output_train)
         if(train):
-            self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
+            #self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
+            self.hist=self.training(data_train,output_train,epochs=self.N,batch_size=self.n)
     
+    @compute_time        
     def training(self,x,y,epoch,batch):
         # DUBBIO : va definita variabile hist?
         self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
@@ -162,7 +174,8 @@ class Neural_network:
         print(best_params)
         return best_params
     
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True):
+    @compute_time
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False):
     
         if x_real is not None:
             dim = x_real.shape[0]
@@ -241,6 +254,7 @@ class MultiFidelity():
         return self.outputs[:,-1]
             
     #---------------------------------------------
+    @compute_time
     def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True):
         
         if x_real is not None:
