@@ -31,6 +31,8 @@ from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
 import time
 
+from abc import ABCMeta, abstractstaticmethod, abstractmethod
+
 
 def compute_time(function):
     def wrapper(*args, **kwargs):
@@ -41,7 +43,6 @@ def compute_time(function):
         print(f"The function {function.__name__} took {timespam} seconds.")
         return res
     return wrapper
-
 
 
 class Suppressor:
@@ -55,7 +56,21 @@ class Suppressor:
         sys.stdout = self._stdout
 
 
-class Neural_network:
+class INetwork(metaclass=ABCMeta):
+    
+    @abstractstaticmethod
+    def prediction(self):
+        return
+    
+    @abstractmethod
+    def inverse(self):
+        return
+    
+    @abstractstaticmethod
+    def save(self):
+        return
+
+class Neural_Network(INetwork):
     
     def __init__(self,name,params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):
         K.clear_session()
@@ -88,13 +103,13 @@ class Neural_network:
             plt.ylabel('MSE')
             plt.legend()
             plt.show()
-    
+            
     @compute_time
     def training(self,x,y,epoch,batch):
         # DUBBIO : va definita variabile hist?
         self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
         return self.hist
-    
+
     def prediction(self,x_test):
         if(self.verbose):
             y_pred=self.model.predict(x_test)[:,0]
@@ -102,12 +117,12 @@ class Neural_network:
             with Suppressor():
                 y_pred = self.model.predict(x_test)[:,0]
         return y_pred    
-
+    
     def save(self,discr="_"):
         print("saving the model ...")
         save_model(self.model,f"{self.name}_model{discr}.h5")
 
-
+    
     def performance(self,data_test,output_test):
         pred=self.prediction(data_test)#[:,0]
         #print(pred.shape)
@@ -120,7 +135,7 @@ class Neural_network:
         print(f"R^2: {r2}")
         
         return (test_mse,r2)
-
+    
     @compute_time
     def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
         dim=y_obs.shape[0]
@@ -188,16 +203,13 @@ class Neural_network:
         print("Best parameters from the HPO:")
         print(best_params)
         return best_params
-
-# def trova_indici_piu_vicini(vettore_più_lungo, vettore_più_corto):
-#     indici_piu_vicini = [np.abs(vettore_più_lungo - elemento).argmin() for elemento in vettore_più_corto]
-#     return indici_piu_vicini
-
-
-class MultiFidelity():
+    
+        
+    
+class MultiFidelity(INetwork):
    
-    def __init__(self,names,params=None,data_train_LF=None,output_train_LF=None,data_train_HF=None, output_train_HF=None,N=None,n=None,do_HPO=False,verbose=False):
-        # names: list of strings
+    def __init__(self,names,params=None,data_train=None,output_train=None,N=None,n=None,do_HPO=False,verbose=False):
+        # names: list of strings, names of the networks (if the discretizations layer that we consider are 2, len(names)==nb_steps)
         # params: list of dictionaries
         # N: list of epochs
         # n: list of batch_sizes
@@ -206,30 +218,40 @@ class MultiFidelity():
         self.names=names
         self.Ns=N
         self.ns=n
+        self.steps=int((len(names)-1)/(len(data_train)-1))+1
         self.model_list = []
         self.outputs = np.empty((0,0))
+        if len(data_train)!=len(output_train) or data_train is None or output_train is None:
+            raise ValueError('The data are incoherent or insufficient')
         
         K.clear_session()
         if len(params)<len(self.names):
             diff = len(self.names) - len(params)
             params += [None] * diff
                         
-        for index, name in enumerate(self.names):  
-            if(name=='LF'):
-                model=Neural_network(name,params=params[index],data_train=data_train_LF,output_train=output_train_LF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
-                self.model_list.append(model)
-            else:
-                model=Neural_network(name,params=params[index],data_train=data_train_HF,output_train=output_train_HF,N=self.Ns[index],n=self.ns[index],train=True,do_HPO=do_HPO,verbose=verbose)
-                self.model_list.append(model)
+        count=1             
+        for index, name in enumerate(names):  # number networks
+            # ATTENTION to the fact that the "number of dataset" is denoted by the number of discretizations considered 
+        
+            print(data_train[count-1].shape)
+            model=NetworkFactory.build_network(name,params=params[index],data_train=data_train[count-1],output_train=output_train[count-1],N=self.Ns[index],n=self.ns[count-1],train=True,do_HPO=do_HPO,verbose=verbose)
+            self.model_list.append(model)
             # self.outputs.append(model.prediction(self.outputs)) 
-            data_train_HF=np.c_[data_train_HF,model.prediction(data_train_HF)]     # caso con LF di seguito non è mai capitato finora    LINEA VERA
+            if (index+1)==(self.steps-1)*(count-1)+1:
+                count=count+1
+           # print(data_train[count:].shape)
+            data_train[count-1:] = [np.c_[matrix, model.prediction(matrix)] for matrix in data_train[count-1:]]
+            for i in range(len(data_train)):
+                print(data_train[i].shape)
+
+            # data_train[index+1]=np.c_[data_train_HF,model.prediction(data_train_HF)]     # caso con LF di seguito non è mai capitato finora    LINEA VERA
             # debugging purpose
             # indici_piu_vicini = trova_indici_piu_vicini(data_train_LF[:,0], data_train_HF[:,0])
             # print(indici_piu_vicini)
             # data_train_HF=np.c_[data_train_HF,output_train_LF[indici_piu_vicini]] 
             
             #data_train_HF=np.c_[data_train_HF,output_train_HF]     # caso con LF di seguito non è mai capitato finora
-        
+    
     def prediction(self,data_test):
         self.outputs = data_test
         if(len(self.outputs.shape)==1):
@@ -265,14 +287,195 @@ class MultiFidelity():
             ESS=samples.compute_ess()
             print(f"ESS= {ESS}")
             samples.plot_autocorrelation() 
-    
     def save(self,discr="_"):
         print("Saving ...")
         for index, _ in enumerate(self.model_list):
             save_model(self.model_list[index].model,f"{self.names[index]}_model_{discr}.h5")
-            
     def get_output(self):
         return self.outputs[-1]
+    
+
+class Intermediate(INetwork):
+    
+    def __init__(self,params=None,data_train=None,output_train=None,N=None,n=None,train=True,do_HPO=False,verbose=False):
+        # names: list of strings, names of the networks (if the discretizations layer that we consider are 2, len(names)==nb_steps)
+        # params: list of dictionaries
+        # N: list of epochs
+        # n: list of batch_sizes
+        # data_train: list of inputs
+        # output_train: list of outputs
+        self.params=params
+        self.name="Inter" 
+        self.N=N
+        self.n=n
+        self.verbose=verbose
+        self.hist=None
+        self.data_train=data_train
+        self.output_train=output_train
+        
+        if len(data_train)!=2 or len(output_train)!=2:
+            raise ValueError('The data are incoherent or insufficient')
+                
+        # in this way, the dataset should be only made of 1 matrix (np.array)         
+        data_train=np.concatenate((data_train[1],data_train[0]),axis=0)
+        output_train=np.concatenate((output_train[1],output_train[0]),axis=0)
+        
+        # number of inputs of the matrix (columns)  (DUBBIO: non si confonde con lista del caso multifidelity?)
+        if data_train is not None and len(data_train.shape) > 1:
+            self.shape_value = data_train.shape[1]
+        else:
+            self.shape_value = 1 
+
+        if (do_HPO or params is None):
+            if (output_train is None or data_train is None):
+                warning_message = "Not enough data given!"
+                warnings.warn(warning_message, UserWarning)
+            self.params=self.HPO(data_train,output_train)
+        self.model = getModel(self.params,self.shape_value,self.name)
+
+        if(train):
+        
+            self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
+            plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
+            plt.title('Mean Squared Error (MSE) over Epochs')
+            plt.xlabel('Epochs')
+            plt.ylabel('MSE')
+            plt.legend()
+            plt.show()
+
+    @compute_time
+    def training(self,x,y,epoch,batch):
+        # DUBBIO : va definita variabile hist?
+        self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
+        return self.hist
+    
+    def prediction(self,x_test):
+        if len(x_test)!=2:
+            raise ValueError("Not enough data given")
+        x_test=np.concatenate((x_test[1],x_test[0]),axis=0)
+
+        if(self.verbose):
+            y_pred=self.model.predict(x_test)#[:,0]
+        else:
+            with Suppressor():
+                y_pred = self.model.predict(x_test)
+                #print(y_pred)
+                #y_pred = self.model.predict(x_test)[:,0]
+        return y_pred    
+    
+    def save(self,discr="_"):
+        print("saving the model ...")
+        save_model(self.model,f"Inter_model{discr}.h5")
+
+    def performance(self,data_test,output_test):
+        
+        data_test=np.concatenate((data_test[1],data_test[0]),axis=0)
+        output_test=np.concatenate((output_test[1],output_test[0]),axis=0)
+        
+        pred=self.prediction(data_test)#[:,0]
+        #print(pred.shape)
+        test_mse = np.mean(np.square(output_test - pred))
+        print(f"Test MSE: {test_mse}")
+
+        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
+            np.square(output_test - np.mean(output_test))
+        )
+        print(f"R^2: {r2}")
+        
+        return (test_mse,r2)
+    
+    @compute_time
+    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
+        
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation()    
+    # def mse_plot(self,val):
+    #     plt.plot(self.model.history.history['loss'][val:], label='Training Loss')
+    #     plt.title('Mean Squared Error (MSE) over Epochs')
+    #     plt.xlabel('Epochs')
+    #     plt.ylabel('MSE')
+    #     plt.legend()
+    #     plt.show()
+    def objective(self,par): 
+        #print(self.name)
+        K.clear_session()
+        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.shape_value)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
+        return {"loss": CVres, "params": par, "status": STATUS_OK}   
+
+
+    def HPO(self,data_train,output_train):
+
+        MAX_EVAL = 5
+
+        bayes_trials = Trials()
+        opt_list = ["Adam", "Adamax"]
+        kernel_list = ["uniform", "glorot_uniform"]
+        aux_dic = {"opt": opt_list, "kernel_init": kernel_list}
+        space = {
+        "nodes": hp.qloguniform("nodes", np.log(4), np.log(64), 2),
+        "l2weight": hp.loguniform("l2weight", np.log(0.0001), np.log(1)),
+        "lr": hp.loguniform("lr", np.log(0.0001), np.log(0.1)),
+        "kernel_init": hp.choice("kernel_init", kernel_list),
+        "opt": hp.choice("opt", opt_list),
+        }
+
+        best_params = fmin(fn = self.objective,
+                        space = space,
+                        algo = tpe.suggest,
+                        max_evals = MAX_EVAL,
+                        trials = bayes_trials)
+        transfBestparam(best_params, aux_dic)
+        #self.params=best_params
+        
+        print("Best parameters from the HPO:")
+        print(best_params)
+        return best_params
+    
+
+
+    
+class NetworkFactory:
+    # CHIAMA ANCHE DA MF
+    @staticmethod
+    def build_network(network_type,names=[],params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):    
+        
+        if (network_type=="LF" or network_type=="HF" or network_type=="Hflin"):
+            return Neural_Network(network_type,params,data_train,output_train,N,n,train,do_HPO,verbose)
+        
+        if (network_type[:-4].isdigit() and network_type.endswith("step") and len(names)==int(network_type[:-4])):
+            # in this case, data_train, output_train are lists of matrixes containing the data
+            return MultiFidelity(names,params,data_train,output_train,N,n,do_HPO,verbose)
+        
+        if (network_type=="Inter"):
+            return  Intermediate(params,data_train,output_train,N,n,train,do_HPO,verbose)
+        
+# Inter
+        
+        print("invalid network")
+        return -1
+
+    
 
 class FourierLayer(Layer):
     def __init__(self, output_dim, **kwargs):
@@ -579,7 +782,7 @@ def getModel(params,num_inputs, name):
             kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hidden2)
-        merge = kr.merge.concatenate([outputLF, outputadd])
+        merge = kr.layers.concatenate([outputLF, outputadd])
 
         hidden3 = Dense(
             int(params["nodes"]),

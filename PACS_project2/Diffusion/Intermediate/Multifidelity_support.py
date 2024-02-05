@@ -54,6 +54,7 @@ class Neural_network:
         self.data_train=data_train
         self.output_train=output_train
         
+        # number of inputs of the matrix (columns)  (DUBBIO: non si confonde con lista del caso multifidelity?)
         if data_train is not None and len(data_train.shape) > 1:
             self.shape_value = data_train.shape[1]
         else:
