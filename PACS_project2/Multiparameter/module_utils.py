@@ -60,19 +60,6 @@ def  normalization(x):
     np.max(x) - np.min(x)
 )
     
-def add_noise(noise_std_data, noise_sta_output, data, output):
-    output_flag=output
-    data_flag=data
-    for std1,std2 in zip(noise_std_data,noise_sta_output):
-        noise_1 = np.random.normal(0, std1, output.shape[0])    # CHEKC SE FUNZIA ANCHE IN CASO 1D  
-        noise_2 = np.random.normal(0, std2, data.shape)
-        temp1=output+noise_1
-        temp2=data+noise_2
-        output_flag=np.concatenate((output_flag,temp1),axis=0)
-        #print(data_flag.shape)
-        #print(temp2.shape)
-        data_flag=np.concatenate((data_flag,temp2))
-    return (output_flag,data_flag)
 
 def import_data(name):
     with h5py.File(name, "r") as file:
@@ -130,10 +117,16 @@ def getModel(params,num_inputs,name):
         hidden5 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(hidden4)
         output = Dense(1,activation='linear',name='LF')(hidden5)
     elif (name == 'HF'):
+        # inputs = Input(shape=(num_inputs,))
+        # hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(inputs)
+        # hidden1=Dropout(0.5)(hidden1)
+        # output = Dense(1,activation='sigmoid',name='LF')(hidden1) 
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(64,activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(0.001))(inputs)
-        hidden1=Dropout(0.5)(hidden1)
-        output = Dense(1,activation='sigmoid',name='LF')(hidden1) 
+        hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
+        hidden1=Dropout(0.03)(hidden1)
+        fourier_layer = FourierLayer(output_dim=int(params["nodes"]))(hidden1)
+        hidden2 = Dense(int(params['nodes']),activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(fourier_layer)
+        output = Dense(1,activation='linear',name='HF')(hidden2)
     elif (name == 'Single'):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation=custom_activation,kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(inputs)

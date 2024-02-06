@@ -579,7 +579,20 @@ class NetworkFactory:
         print("invalid network")
         return -1
 
-    
+def add_noise(noise_std_data, noise_sta_output, data, output):
+    output_flag=output
+    data_flag=data
+    for std1,std2 in zip(noise_std_data,noise_sta_output):
+        noise_1 = np.random.normal(0, std1, output.shape)    # CHEKC SE FUNZIA ANCHE IN CASO 1D  
+        noise_2 = np.random.normal(0, std2, data.shape)
+        temp1=output+noise_1
+        temp2=data+noise_2
+        output_flag=np.concatenate((output_flag,temp1),axis=0)
+        #print(data_flag.shape)
+        #print(temp2.shape)
+        data_flag=np.concatenate((data_flag,temp2))
+    return (output_flag,data_flag)
+
 
 class FourierLayer(Layer):
     def __init__(self, output_dim, **kwargs):
