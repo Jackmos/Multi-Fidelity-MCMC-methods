@@ -34,6 +34,7 @@ from scipy.stats import multivariate_normal
 import arviz as az
 
 from abc import ABCMeta, abstractstaticmethod, abstractmethod
+from functools import reduce
 
 import importlib
 from pathlib import Path
@@ -98,7 +99,7 @@ class Neural_Network(INetwork):
         self.hist=None
         self.data_train=data_train
         self.output_train=output_train
-        
+        self.transformations=[]
         if data_train is not None and len(data_train.shape) > 1:
             self.shape_value = data_train.shape[1]
         else:
@@ -132,7 +133,18 @@ class Neural_Network(INetwork):
         else:
             with Suppressor():
                 y_pred = self.model.predict(x_test)[:,0]
-        return y_pred    
+        return y_pred  
+    
+    def wrapper_prediction(self,x_test):
+        
+        if (x_test.ndim==1):
+            x_test=x_test.reshape(-1,1)
+        #print(x_test.shape)
+        if self.transformations:
+            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
+        else:
+            x_final = x_test
+        return self.prediction(x_final)
     
     def save(self,discr="_",place=""):
         print("saving the model ...")
@@ -154,8 +166,10 @@ class Neural_Network(INetwork):
         return (test_mse,r2)
     
     @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False):
-    
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False,transformations=[]):
+        
+        self.transformations=transformations
+        
         if x_real is not None:
             dim = x_real.shape[0]
         elif y_obs is not None:
@@ -164,8 +178,8 @@ class Neural_Network(INetwork):
             warning_message = "No observation nor data given"
             warnings.warn(warning_message, UserWarning)    
         if (N<=burn_in):
-                warning_message = "number of steps insufficient, smaller or equal than burn-in"
-                warnings.warn(warning_message, UserWarning)        
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
         
         if(cov_prior is None):
             cov_prior=mean_prior*0.2
@@ -180,7 +194,7 @@ class Neural_Network(INetwork):
             y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
         
         my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=x_real.shape[0]), cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.prediction)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
         
         print(f"real values are {x_real}")
         
@@ -277,6 +291,8 @@ class MultiFidelity(INetwork):
         self.steps=int((len(names)-1)/(len(data_train)-1))+1
         self.model_list = []
         self.outputs = np.empty((0,0))
+        self.transformations=[]
+        
         if len(data_train)!=len(output_train) or data_train is None or output_train is None:
             raise ValueError('The data are incoherent or insufficient')
         
@@ -316,10 +332,23 @@ class MultiFidelity(INetwork):
             #print("check")
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
         return self.outputs[:,-1]
-
-    @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True):
+    
+    def wrapper_prediction(self,x_test):
         
+        if (x_test.ndim==1):
+            x_test=x_test.reshape(-1,1)
+        #print(x_test.shape)
+        if self.transformations:
+            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
+        else:
+            x_final = x_test
+        return self.prediction(x_final)
+    
+    @compute_time
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, transformation=[]):
+        # transformations is a list of lambda functions
+        self.transformations=transformation
+
         if x_real is not None:
             dim = x_real.shape[0]
         elif y_obs is not None:
@@ -344,7 +373,7 @@ class MultiFidelity(INetwork):
             y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
         
         my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=dim), cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.prediction)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)         #
         
         print(f"real values are {x_real}")
         
@@ -413,6 +442,7 @@ class Intermediate(INetwork):
         self.hist=None
         self.data_train=data_train
         self.output_train=output_train
+        self.transformations=[]
         
         if len(data_train)!=2 or len(output_train)!=2:
             raise ValueError('The data are incoherent or insufficient')
@@ -462,7 +492,18 @@ class Intermediate(INetwork):
                 y_pred = self.model.predict(x_test)
                 #print(y_pred)
                 #y_pred = self.model.predict(x_test)[:,0]
-        return y_pred    
+        return y_pred  
+    
+    def wrapper_prediction(self,x_test):
+        
+        if (x_test.ndim==1):
+            x_test=x_test.reshape(-1,1)
+        #print(x_test.shape)
+        if self.transformations:
+            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
+        else:
+            x_final = x_test
+        return self.prediction(x_final) 
     
     def save(self,discr="_",place=""):
         print("saving the model ...")
@@ -487,7 +528,7 @@ class Intermediate(INetwork):
         return (test_mse,r2)
     
     
-    # TO BE MODIFIED
+    # TO BE MODIFIED!!
     @compute_time
     def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
         dim=y_obs.shape[0]

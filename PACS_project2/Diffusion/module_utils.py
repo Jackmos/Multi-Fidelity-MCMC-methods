@@ -88,6 +88,71 @@ def import_data(name):#-> Tuple[np.array, np.array]:
 
     return (R, U)
 
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False):
+    
+    
+    my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
+    idata = tda.to_inference_data(my_chains, burnin=burnin)
+    estimates=np.array(az.summary(idata)['mean'])
+    print(f"estimated values are {estimates}")
+    if (diagnostic is True):
+        print(az.summary(idata))
+        az.plot_trace(idata)
+        print("Autocorrelation...")
+        az.plot_autocorr(idata)
+        #az.plot_violin(idata)
+        
+    
+    return estimates
+
+def plot_hist(estimates, real_x, output1,output2):   
+    values2=estimates
+    values1=real_x
+    values = np.vstack((values1, values2))
+
+    # Creare categorie in base alla lunghezza di values
+    categories = np.arange(1, values.shape[1] + 1)
+
+    # Larghezza delle colonne
+    bar_width = 0.35
+
+    # Posizioni delle colonne
+    bar_positions = [categories - bar_width/2 + i*bar_width for i in range(values.shape[0])]
+    plt.figure()
+    # Creazione del plot
+    for i in range(values.shape[0]):
+        plt.bar(bar_positions[i], values[i, :], width=bar_width)
+
+
+    plt.ylabel('Value')
+    plt.title('Input')
+    plt.xticks(categories)
+    plt.legend(["Real value", "Estimate"])
+
+
+    # Mostra il plot
+    plt.show()
+    
+    values2 = output2
+    values1=output1
+
+    values = np.vstack((values1, values2))
+
+    # Creazione del plot
+    for i in range(values.shape[0]):
+        plt.bar(bar_positions[i], values[i, :], width=bar_width)
+
+
+    plt.ylabel('Value')
+    plt.title('Output')
+    plt.xticks(categories)
+    plt.legend(["Real value", "Estimate"])
+    # Mostra il plot
+    plt.show()
+    return   
+
+
 # NON USATA
 def custom_loss(y_pred, y_true):
     goodind = K.not_equal(y_pred, -10)
