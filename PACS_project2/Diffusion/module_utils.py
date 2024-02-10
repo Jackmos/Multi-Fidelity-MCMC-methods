@@ -90,7 +90,8 @@ def import_data(name):#-> Tuple[np.array, np.array]:
 
 def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False):
     
-    
+    #if(adaptive_MH is True):
+        
     my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
     idata = tda.to_inference_data(my_chains, burnin=burnin)
@@ -108,7 +109,9 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
 
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
-    values1=real_x
+    print(values2)
+    values1=real_x[:,0] #! [:,0] aggiunto solo per questo caso !
+    print(values1)
     values = np.vstack((values1, values2))
 
     # Creare categorie in base alla lunghezza di values

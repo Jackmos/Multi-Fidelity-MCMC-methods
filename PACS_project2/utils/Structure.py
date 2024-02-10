@@ -89,7 +89,7 @@ class INetwork(metaclass=ABCMeta):
 
 class Neural_Network(INetwork):
     
-    def __init__(self,name,params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):
+    def __init__(self,name,params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,transformations=[],verbose=False):
         K.clear_session()
         self.name=name
         self.params=params
@@ -99,7 +99,7 @@ class Neural_Network(INetwork):
         self.hist=None
         self.data_train=data_train
         self.output_train=output_train
-        self.transformations=[]
+        self.transformations=transformations
         if data_train is not None and len(data_train.shape) > 1:
             self.shape_value = data_train.shape[1]
         else:
@@ -153,7 +153,7 @@ class Neural_Network(INetwork):
 
     
     def performance(self,data_test,output_test):
-        pred=self.prediction(data_test)#[:,0]
+        pred=self.wrapper_prediction(data_test)#[:,0]
         #print(pred.shape)
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
@@ -204,38 +204,38 @@ class Neural_Network(INetwork):
         estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
         
         if diagnostic is True:
-            plot_hist(estimates,x_real, self.prediction(estimates), self.prediction(x_real))
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.prediction(x_real))
         
         return estimates
     
     
     # CUQI CASE
-    # @compute_time
-    # def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-    #     dim=y_obs.shape[0]
-    #     if (N<=burn_in):
-    #             warning_message = "number of steps insufficient, smaller or equal than burn-in"
-    #             warnings.warn(warning_message, UserWarning)        
-    #     if (x_init is None):
-    #         x_init=np.zeros(dim)
-    #     elif isinstance(x_init, (int, float)):
-    #         x_init=x_init*np.ones(dim)
-    #     A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-    #     x=Uniform(np.zeros(dim),np.ones(dim))
-    #     y=Gaussian(mean=A(x),cov=proposal_sd)
-    #     # y_obs=y(x=real_x).sample()
-    #     posterior=JointDistribution(y,x)(y=y_obs)
+    @compute_time
+    def inverse_cuqi(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
         
-    #     sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-    #     samples=sampler.sample_adapt(N-burn_in,burn_in)
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
         
-    #     if(diagnostic is True):
-    #         samples.plot_trace()
-    #         mean=samples.mean()
-    #         print(f"Mean values= {mean}")
-    #         ESS=samples.compute_ess()
-    #         print(f"ESS= {ESS}")
-    #         samples.plot_autocorrelation()    
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation()    
     
 
 
@@ -357,8 +357,8 @@ class MultiFidelity(INetwork):
             warning_message = "No observation nor data given"
             warnings.warn(warning_message, UserWarning)    
         if (N<=burn_in):
-                warning_message = "number of steps insufficient, smaller or equal than burn-in"
-                warnings.warn(warning_message, UserWarning)        
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
         
         if(cov_prior is None):
             cov_prior=mean_prior*0.2
@@ -382,37 +382,40 @@ class MultiFidelity(INetwork):
         estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
         
         if diagnostic is True:
-            plot_hist(estimates,x_real, self.prediction(estimates), self.prediction(x_real))
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
         return estimates
 
     # CUQIPY
-    # @compute_time
-    # def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-    #     dim=y_obs.shape[0]
-    #     if (N<=burn_in):
-    #             warning_message = "number of steps insufficient, smaller or equal than burn-in"
-    #             warnings.warn(warning_message, UserWarning)        
-    #     if (x_init is None):
-    #         x_init=np.zeros(dim)
-    #     elif isinstance(x_init, (int, float)):
-    #         x_init=x_init*np.ones(dim)
-    #     A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-    #     x=Uniform(np.zeros(dim),np.ones(dim))
-    #     y=Gaussian(mean=A(x),cov=proposal_sd)
-    #     # y_obs=y(x=real_x).sample()
-    #     posterior=JointDistribution(y,x)(y=y_obs)
+    @compute_time
+    def inverse_cuqi(self, x_real,y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
+        dim=y_obs.shape[0]
+        if (N<=burn_in):
+                warning_message = "number of steps insufficient, smaller or equal than burn-in"
+                warnings.warn(warning_message, UserWarning)        
+        if (x_init is None):
+            x_init=np.zeros(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init=x_init*np.ones(dim)
+        A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+        x=Uniform(np.zeros(dim),np.ones(dim))
+        y=Gaussian(mean=A(x),cov=proposal_sd)
+        # y_obs=y(x=real_x).sample()
+        posterior=JointDistribution(y,x)(y=y_obs)
         
-    #     sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-    #     samples=sampler.sample_adapt(N-burn_in,burn_in)
+        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
         
-    #     if(diagnostic is True):
-    #         samples.plot_trace()
-    #         mean=samples.mean()
-    #         print(f"Mean values= {mean}")
-    #         ESS=samples.compute_ess()
-    #         print(f"ESS= {ESS}")
-    #         samples.plot_autocorrelation() 
+        if(diagnostic is True):
+            samples.plot_trace()
+            mean=samples.mean()
+            print(f"Mean values= {mean}")
+            ESS=samples.compute_ess()
+            print(f"ESS= {ESS}")
+            samples.plot_autocorrelation()
+            plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
+        
+        return estimates 
             
             
     def save(self,discr="_",place=""):
