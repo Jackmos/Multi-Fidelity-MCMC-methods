@@ -88,12 +88,24 @@ def import_data(name):#-> Tuple[np.array, np.array]:
 
     return (R, U)
 
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
     
+    MAP = tda.get_MAP(my_posterior)
     #if(adaptive_MH is True):
-        
-    my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
-    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
+    if algo == "RW":
+        my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+    elif algo=="AM":
+        # adaptive metropolis
+        my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)
+    elif algo=="CN":
+        # preconditioned Crank Nicolson
+        my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
+    elif algo=="DREAMZ":
+        my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
+    else: 
+        raise ValueError("Unknown algorithm %s"%algo)
+    
+    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,force_sequential=True)
     idata = tda.to_inference_data(my_chains, burnin=burnin)
     estimates=np.array(az.summary(idata)['mean'])
     print(f"estimated values are {estimates}")
@@ -109,9 +121,8 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
 
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
-    print(values2)
     values1=real_x[:,0] #! [:,0] aggiunto solo per questo caso !
-    print(values1)
+    print(np.abs(values2-values1))
     values = np.vstack((values1, values2))
 
     # Creare categorie in base alla lunghezza di values

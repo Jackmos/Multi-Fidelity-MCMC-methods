@@ -30,11 +30,42 @@ import time
 
 
     
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False):
+# def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=False,algo="RW"):
     
     
-    my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
-    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
+#     my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+#     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True)
+#     idata = tda.to_inference_data(my_chains, burnin=burnin)
+#     estimates=np.array(az.summary(idata)['mean'])
+#     print(f"estimated values are {estimates}")
+#     if (diagnostic is True):
+#         print(az.summary(idata))
+#         az.plot_trace(idata)
+#         print("Autocorrelation...")
+#         az.plot_autocorr(idata)
+#         #az.plot_violin(idata)
+        
+    
+#     return estimates
+
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
+    
+    MAP = tda.get_MAP(my_posterior)
+    #if(adaptive_MH is True):
+    if algo == "RW":
+        my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+    elif algo=="AM":
+        # adaptive metropolis
+        my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)
+    elif algo=="CN":
+        # preconditioned Crank Nicolson
+        my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
+    elif algo=="DREAMZ":
+        my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
+    else: 
+        raise ValueError("Unknown algorithm %s"%algo)
+    
+    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,force_sequential=True)
     idata = tda.to_inference_data(my_chains, burnin=burnin)
     estimates=np.array(az.summary(idata)['mean'])
     print(f"estimated values are {estimates}")
@@ -51,6 +82,9 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
     values1=real_x
+    diff_output=np.abs(output1-output2)
+    diff_value=np.abs(values1-values2)
+    print(f"the estimated values are {diff_value}\n the difference between outputs of two models are {diff_output}")
     values = np.vstack((values1, values2))
 
     # Creare categorie in base alla lunghezza di values

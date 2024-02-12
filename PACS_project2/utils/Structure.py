@@ -30,7 +30,7 @@ from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
 import time
 import tinyDA as tda
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal, beta   
 import arviz as az
 
 from abc import ABCMeta, abstractstaticmethod, abstractmethod
@@ -184,16 +184,19 @@ class Neural_Network(INetwork):
         if(cov_prior is None):
             cov_prior=mean_prior*0.2
         if(cov_likelihood is None):
-            cov_likelihood=cov_noise*np.eye(x_real.shape[0])
+            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
+            
+            
+            
             
         my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
         
         if(y_obs is None):
-            y_obs=self.prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
         else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
+            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
         
-        my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=x_real.shape[0]), cov_likelihood)
+        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
         my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
         
         print(f"real values are {x_real}")
@@ -204,7 +207,7 @@ class Neural_Network(INetwork):
         estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
         
         if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.prediction(x_real))
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
         return estimates
     
@@ -345,7 +348,7 @@ class MultiFidelity(INetwork):
         return self.prediction(x_final)
     
     @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, transformation=[]):
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="RW",transformation=[]):
         # transformations is a list of lambda functions
         self.transformations=transformation
 
@@ -363,23 +366,27 @@ class MultiFidelity(INetwork):
         if(cov_prior is None):
             cov_prior=mean_prior*0.2
         if(cov_likelihood is None):
-            cov_likelihood=cov_noise*np.eye(x_real.shape[0])
-            
-        my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
+            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
+        
+        if(mean_prior.shape[0]==1):
+            my_prior=beta(1.,1.)
+        else:
+            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
         
         if(y_obs is None):
-            y_obs=self.prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
         else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)    # 
+            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
         
-        my_loglike = tda.GaussianLogLike(y_obs+np.random.normal(scale=cov_noise, size=dim), cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)         #
+        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
         
         print(f"real values are {x_real}")
         
         if(rwmh_cov is None):
             rwmh_cov = np.eye(len(x_real))
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
+            
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
         
         if diagnostic is True:
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
