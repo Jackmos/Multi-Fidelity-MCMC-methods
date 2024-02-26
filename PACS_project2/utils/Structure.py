@@ -23,7 +23,7 @@ import h5py
 import sys
 import os
 import warnings
-
+import copy
 from cuqi.distribution import Uniform, Gaussian,JointDistribution
 from cuqi.sampler import MH
 from cuqi.model import Model as CuqiModel
@@ -51,6 +51,49 @@ def load_context_functions(context_folder):
         return False
 from module_utils import *
 
+
+class Function:
+    def __init__(self, func):
+        """
+        Initialize the class with a given function.
+
+        Parameters:
+        - func: The function for which we want to compute the Jacobian.
+        """
+        self.func = func
+
+    def compute_jacobian(self, x):
+        """
+        Compute the Jacobian matrix for the given point x.
+
+        Parameters:
+        - x: The point at which to compute the Jacobian.
+
+        Returns:
+        - The Jacobian matrix.
+        """
+        x = np.atleast_1d(x).astype(float)
+        n = len(x)
+        m = len(self.func(x))
+
+        jacobian = np.zeros((m, n))
+
+        h = 1e-8
+        for i in range(n):
+            x_copy = x.copy()
+
+            # Perturb the i-th element positively
+            x_copy[i] += h
+            func_pos = self.func(x_copy)
+
+            # Perturb the i-th element negatively
+            x_copy[i] -= 2 * h
+            func_neg = self.func(x_copy)
+
+            # Compute partial derivative using central difference
+            jacobian[:, i] = (func_pos - func_neg) / (2 * h)
+
+        return jacobian
 def compute_time(function):
     def wrapper(*args, **kwargs):
         init = time.time()
@@ -79,8 +122,16 @@ class INetwork(metaclass=ABCMeta):
     def prediction(self):
         return
     
+    @abstractstaticmethod
+    def performance(self):
+        return
+
     @abstractmethod
     def inverse(self):
+        return
+    
+    @abstractmethod
+    def inverse_cuqi(self):
         return
     
     @abstractstaticmethod
@@ -120,7 +171,7 @@ class Neural_Network(INetwork):
             plt.ylabel('MSE')
             plt.legend()
             plt.show()
-            
+          
     @compute_time
     def training(self,x,y,epoch,batch):
         # DUBBIO : va definita variabile hist?
@@ -166,7 +217,7 @@ class Neural_Network(INetwork):
         return (test_mse,r2)
     
     @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False,transformations=[]):
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False,transformations=[], algo="MH"):
         
         self.transformations=transformations
         
@@ -214,31 +265,59 @@ class Neural_Network(INetwork):
     
     # CUQI CASE
     @compute_time
-    def inverse_cuqi(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-        dim=y_obs.shape[0]
+    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5,sd_noise=0.1,proposal_sd=0.3,adapt=False,scale=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+
         if (N<=burn_in):
-                warning_message = "number of steps insufficient, smaller or equal than burn-in"
-                warnings.warn(warning_message, UserWarning)        
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
+              
         if (x_init is None):
-            x_init=np.zeros(dim)
+            x_init=np.random.rand(dim)
         elif isinstance(x_init, (int, float)):
             x_init=x_init*np.ones(dim)
-        A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-        x=Uniform(np.zeros(dim),np.ones(dim))
+
+        if algo=="NUTS":
+            fun=Function(self.wrapper_prediction)
+            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Gaussian(mean=mean_prior,cov=cov_prior)
+        else:    
+            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
         y=Gaussian(mean=A(x),cov=proposal_sd)
-        # y_obs=y(x=real_x).sample()
-        posterior=JointDistribution(y,x)(y=y_obs)
         
-        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        if(y_obs is None):
+            y_obs=y(x=x_real).sample()
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
+
+        # posterior=JointDistribution(y,x)(y=y_obs)
         
-        if(diagnostic is True):
-            samples.plot_trace()
-            mean=samples.mean()
-            print(f"Mean values= {mean}")
-            ESS=samples.compute_ess()
-            print(f"ESS= {ESS}")
-            samples.plot_autocorrelation()    
+        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        # samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        # if(diagnostic is True):
+        #     samples.plot_trace()
+        #     mean=samples.mean()
+        #     print(f"Mean values= {mean}")
+        #     ESS=samples.compute_ess()
+        #     print(f"ESS= {ESS}")
+        #     samples.plot_autocorrelation()
+        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
+        
+        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo, adapt=adapt, scale=scale)
+        estimates=np.mean(estimates,axis=1)
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
     
 
 
@@ -347,6 +426,34 @@ class MultiFidelity(INetwork):
             x_final = x_test
         return self.prediction(x_final)
     
+
+
+    def performance(self,data_test,output_test,position=None):
+        
+        data=copy.copy(data_test)
+        if(position is None):
+            position=len(self.model_list)
+        elif(not isinstance(position, int) or position>len(self.model_list)):
+            raise ValueError('the required NN is not existent')
+        
+        for i in range(position-1):
+            data = np.concatenate(
+                    (data,  self.model_list[i].wrapper_prediction(data).reshape(-1,1)),axis=1
+                ) 
+        
+        pred=self.model_list[position-1].wrapper_prediction(data)#[:,0]
+    
+        #print(pred.shape)
+        test_mse = np.mean(np.square(output_test - pred))
+        print(f"Test MSE: {test_mse}")
+
+        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
+            np.square(output_test - np.mean(output_test))
+        )
+        print(f"R^2: {r2}")
+        
+        return (test_mse,r2)
+
     @compute_time
     def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="RW",transformation=[]):
         # transformations is a list of lambda functions
@@ -395,34 +502,62 @@ class MultiFidelity(INetwork):
 
     # CUQIPY
     @compute_time
-    def inverse_cuqi(self, x_real,y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-        dim=y_obs.shape[0]
+    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5, sd_noise=0.1,adapt=False,scale=0.3,proposal_sd=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+
         if (N<=burn_in):
-                warning_message = "number of steps insufficient, smaller or equal than burn-in"
-                warnings.warn(warning_message, UserWarning)        
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
+              
         if (x_init is None):
-            x_init=np.zeros(dim)
+            x_init=np.random.rand(dim)
         elif isinstance(x_init, (int, float)):
             x_init=x_init*np.ones(dim)
-        A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-        x=Uniform(np.zeros(dim),np.ones(dim))
+
+        if algo=="NUTS":
+            fun=Function(self.wrapper_prediction)
+            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Gaussian(mean=mean_prior,cov=cov_prior)
+        else:    
+            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
         y=Gaussian(mean=A(x),cov=proposal_sd)
-        # y_obs=y(x=real_x).sample()
-        posterior=JointDistribution(y,x)(y=y_obs)
         
-        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        if(y_obs is None):
+            y_obs=y(x=x_real).sample()
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
+
         
-        if(diagnostic is True):
-            samples.plot_trace()
-            mean=samples.mean()
-            print(f"Mean values= {mean}")
-            ESS=samples.compute_ess()
-            print(f"ESS= {ESS}")
-            samples.plot_autocorrelation()
-            plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
+
+
+        # posterior=JointDistribution(y,x)(y=y_obs)
         
-        return estimates 
+        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        # samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        # if(diagnostic is True):
+        #     samples.plot_trace()
+        #     mean=samples.mean()
+        #     print(f"Mean values= {mean}")
+        #     ESS=samples.compute_ess()
+        #     print(f"ESS= {ESS}")
+        #     samples.plot_autocorrelation()
+        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
+        
+        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo,adapt=adapt,scale=scale)
+        estimates=np.mean(estimates,axis=1)
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
             
             
     def save(self,discr="_",place=""):
@@ -540,38 +675,110 @@ class Intermediate(INetwork):
     
     # TO BE MODIFIED!!
     @compute_time
-    def inverse(self, y_obs, N=1000, burn_in=500, proposal_sd=0.3,x_init=None,diagnostic=True):
-        dim=y_obs.shape[0]
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="RW",transformation=[]):
+        # transformations is a list of lambda functions
+        self.transformations=transformation
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
         if (N<=burn_in):
-                warning_message = "number of steps insufficient, smaller or equal than burn-in"
-                warnings.warn(warning_message, UserWarning)        
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
+        
+        if(cov_prior is None):
+            cov_prior=mean_prior*0.2
+        if(cov_likelihood is None):
+            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
+        
+        if(mean_prior.shape[0]==1):
+            my_prior=beta(1.,1.)
+        else:
+            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
+        
+        if(y_obs is None):
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
+        
+        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+        
+        print(f"real values are {x_real}")
+        
+        if(rwmh_cov is None):
+            rwmh_cov = np.eye(len(x_real))
+            
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
+        
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
+    
+    @compute_time
+    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5,sd_noise=0.1,adapt=False,scale=0.3,proposal_sd=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+
+        if (N<=burn_in):
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
+              
         if (x_init is None):
-            x_init=np.zeros(dim)
+            x_init=np.random.rand(dim)
         elif isinstance(x_init, (int, float)):
             x_init=x_init*np.ones(dim)
-        A=CuqiModel(forward=self.prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-        x=Uniform(np.zeros(dim),np.ones(dim))
+
+        if algo=="NUTS":
+            fun=Function(self.wrapper_prediction)
+            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Gaussian(mean=mean_prior,cov=cov_prior)
+        else:    
+            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
+            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
+
         y=Gaussian(mean=A(x),cov=proposal_sd)
-        # y_obs=y(x=real_x).sample()
-        posterior=JointDistribution(y,x)(y=y_obs)
         
-        sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        if(y_obs is None):
+            y_obs=y(x=x_real).sample()
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
+
         
-        if(diagnostic is True):
-            samples.plot_trace()
-            mean=samples.mean()
-            print(f"Mean values= {mean}")
-            ESS=samples.compute_ess()
-            print(f"ESS= {ESS}")
-            samples.plot_autocorrelation()    
-    # def mse_plot(self,val):
-    #     plt.plot(self.model.history.history['loss'][val:], label='Training Loss')
-    #     plt.title('Mean Squared Error (MSE) over Epochs')
-    #     plt.xlabel('Epochs')
-    #     plt.ylabel('MSE')
-    #     plt.legend()
-    #     plt.show()
+
+
+        # posterior=JointDistribution(y,x)(y=y_obs)
+        
+        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
+        # samples=sampler.sample_adapt(N-burn_in,burn_in)
+        
+        # if(diagnostic is True):
+        #     samples.plot_trace()
+        #     mean=samples.mean()
+        #     print(f"Mean values= {mean}")
+        #     ESS=samples.compute_ess()
+        #     print(f"ESS= {ESS}")
+        #     samples.plot_autocorrelation()
+        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
+        
+        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo, adapt=adapt, scale=scale)
+        estimates=np.mean(estimates,axis=1)
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
+            
     def objective(self,par): 
         #print(self.name)
         K.clear_session()
@@ -615,26 +822,24 @@ class NetworkFactory:
     @staticmethod
     def build_network(network_type,names=[],params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):    
         
-        if (network_type=="LF" or network_type=="HF" or network_type=="Hflin"):
+        if (network_type=="LF" or network_type=="HF" or network_type=="Hflin" or network_type=="Hfper" ):
             return Neural_Network(network_type,params,data_train,output_train,N,n,train,do_HPO,verbose)
         
-        if (network_type[:-4].isdigit() and network_type.endswith("step") and len(names)==int(network_type[:-4])):
+        if (network_type[:-4].isdigit() and network_type.endswith("step") ):#and len(names)==int(network_type[:-4])):
             # in this case, data_train, output_train are lists of matrixes containing the data
             return MultiFidelity(names,params,data_train,output_train,N,n,do_HPO,verbose)
         
         if (network_type=="Inter"):
             return  Intermediate(params,data_train,output_train,N,n,train,do_HPO,verbose)
         
-# Inter
-        
-        print("invalid network")
+        print("Invalid Network")
         return -1
 
 def add_noise(noise_std_data, noise_sta_output, data, output):
     output_flag=output
     data_flag=data
     for std1,std2 in zip(noise_std_data,noise_sta_output):
-        noise_1 = np.random.normal(0, std1, output.shape)    # CHEKC SE FUNZIA ANCHE IN CASO 1D  
+        noise_1 = np.random.normal(0, std1, output.shape)     
         noise_2 = np.random.normal(0, std2, data.shape)
         temp1=output+noise_1
         temp2=data+noise_2

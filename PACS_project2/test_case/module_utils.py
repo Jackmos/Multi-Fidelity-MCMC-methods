@@ -79,6 +79,86 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
     
     return estimates
 
+def MCMC_cuqi(y,x,observation, N, burn_in, n=1, diagnostic=True,algo="MH"):
+    
+    x_init=np.random.rand(observation.shape[0],n)
+        
+    estimates=np.empty((observation.shape[0],0))
+    ESSs=np.empty((observation.shape[0],0))
+    #Geweke=np.empty((x_init.shape[0],0))
+    #Rhat=np.empty((observation.shape[0],0))
+
+    chains=np.empty((0,observation.shape[0],N-burn_in))
+    #chains=np.empty((observation.shape[0],N-burn_in))
+    post=np.empty((observation.shape[0],0))
+    posterior=JointDistribution(y,x)(y=observation)
+
+    for i in range(n):
+        
+        if algo=="NUTS":
+            sampler=NUTS(posterior,x0=x_init[:,i])
+        else:
+            sampler=MH(posterior,x0=x_init[:,i])
+        samples=sampler.sample_adapt(N-burn_in,burn_in)
+        estimates=np.column_stack((estimates,samples.mean()[:, np.newaxis]))
+       # ESSs=np.column_stack((ESSs,samples.compute_ess()[:, np.newaxis]))
+  #      Rhat=np.column_stack((Rhat,samples.compute_rhat()[:, np.newaxis]))
+        #print(Geweke)
+        #Geweke=np.column_stack((Geweke,samples.diagnostics()[:, np.newaxis][0]))
+                # chains=np.concatenate(chains, samplesMH_LF.samples)
+        #printsamples.shape)
+        chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
+        #chains=np.vstack((chains, samples.samples))
+        #print(samples.samples.shape)
+        post=np.concatenate((post,samples.samples),axis=1)
+
+        print(                f"********************  # Mean values = {estimates.mean(axis=1)}  ********************"
+                )
+          
+    if(diagnostic is True):
+        if(n==1):
+            samples.plot_trace()
+            samples.plot_autocorrelation()
+        else:
+            num_bins=20
+            plt.figure()
+            for num in range(post.shape[0]):        
+                
+                bin_edges = np.linspace(np.min(post[num,:]), np.max(post[num,:]), num_bins + 1)
+                hist, _ = np.histogram(post, bins=bin_edges)
+                hist=hist/post.shape[1]
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                print(hist)
+                plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
+
+                plt.xlabel('Value')
+                plt.ylabel('Probability')
+                plt.title('Distribution')
+                plt.legend()
+                plt.show()
+                
+            autocov=arviz.autocov(chains[:,0,:])
+            ess=arviz.ess(chains[:,0,:])
+            print(                f"********************  # ESS values = {ess}  ********************"
+                )
+
+
+            plt.figure()
+            plt.plot(autocov[0,:])
+            plt.title('Autocovariance first chain')
+            plt.xlabel('Lag')
+            plt.ylabel('Autocovariance')
+            plt.legend()
+            plt.show()
+    
+    return estimates
+
+
+
+
+
+
+
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
     values1=real_x

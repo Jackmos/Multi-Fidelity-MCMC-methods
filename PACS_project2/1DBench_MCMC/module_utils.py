@@ -18,7 +18,7 @@ import os
 import warnings
 
 from cuqi.distribution import Uniform, Gaussian,JointDistribution, Beta
-from cuqi.sampler import MH,NUTS
+from cuqi.sampler import MH,NUTS, Gibbs, CWMH, pCN
 from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
 #from cuqi.diagnostics import Geweke
@@ -27,45 +27,10 @@ from scipy.stats import multivariate_normal,beta
 import arviz as az
 import time 
 
-class Function:
-    def __init__(self, func):
-        """
-        Initialize the class with a given function.
 
-        Parameters:
-        - func: The function for which we want to compute the Jacobian.
-        """
-        self.func = func
-
-    def compute_jacobian(self, x):
-        """
-        Compute the Jacobian matrix for the given point x.
-
-        Parameters:
-        - x: The point at which to compute the Jacobian.
-
-        Returns:
-        - The Jacobian matrix.
-        """
-        x = np.atleast_1d(x).astype(float)
-        n = len(x)
-        m = len(self.func(x))
-
-        jacobian = np.zeros((m, n))
-
-        for i in range(n):
-            x_copy1 = x.copy()
-            x_copy2 = x.copy()
-
-            # Perturb the i-th element
-            h = 1e-8
-            x_copy1[i] += h
-            x_copy2[i] -= h
-
-            # Compute partial derivative using finite difference
-            jacobian[:, i] = (self.func(x_copy1) - self.func(x_copy2)) / (2 * h)
-
-        return jacobian
+    
+def custom_activation(x):
+    return x + K.square(K.sin(x))
 
 
 def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
@@ -98,6 +63,116 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
         
     
     return estimates
+
+
+
+def MCMC_cuqi(y,x,observation, N, burn_in, n=1, diagnostic=True,algo="MH",adapt=False, scale=0.3):
+    
+    x_init=np.random.rand(observation.shape[0],n)
+        
+    estimates=np.empty((observation.shape[0],0))
+    ESSs=np.empty((observation.shape[0],0))
+    #Geweke=np.empty((x_init.shape[0],0))
+    #Rhat=np.empty((observation.shape[0],0))
+
+    chains=np.empty((0,observation.shape[0],N-burn_in))
+    #chains=np.empty((observation.shape[0],N-burn_in))
+    post=np.empty((observation.shape[0],0))
+    posterior=JointDistribution(y,x)(y=observation)
+
+    for i in range(n):
+        
+        if algo=="NUTS":
+            # Hamiltonian Monte Carlo
+            sampler=NUTS(posterior,x0=x_init[:,i])
+        elif algo=="MH":
+            # Metropolis Hastings
+            if adapt is False:
+                sampler=MH(posterior,x0=x_init[:,i],scale=scale)
+            else:
+                sampler=MH(posterior,x0=x_init[:,i])
+
+        # elif algo=="Gibbs":
+        #     # GIbbs Sampler
+        #     sampler=
+        # elif algo=="CWMH":
+        #     sampler=
+        elif algo=="pCN":
+            # preconditioned Crank Nicholson
+            sampler=pCN(posterior,x0=x_init[:,i])
+        else:
+            raise ValueError("Unknown algorithm %s"%algo)
+        if adapt is True:
+            samples=sampler.sample_adapt(N-burn_in,burn_in)
+        else:
+            samples=sampler.sample(N-burn_in,burn_in)
+
+        estimates=np.column_stack((estimates,samples.mean()[:, np.newaxis]))
+       # ESSs=np.column_stack((ESSs,samples.compute_ess()[:, np.newaxis]))
+  #      Rhat=np.column_stack((Rhat,samples.compute_rhat()[:, np.newaxis]))
+        #print(Geweke)
+        #Geweke=np.column_stack((Geweke,samples.diagnostics()[:, np.newaxis][0]))
+                # chains=np.concatenate(chains, samplesMH_LF.samples)
+        #printsamples.shape)
+        chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
+        post=np.concatenate((post,samples.samples),axis=1)
+
+
+        print(                f"********************  # Mean values = {estimates.mean(axis=1)}  ********************"
+                )
+    print(chains.shape)
+    for l in range(chains.shape[1]):
+        plt.figure(figsize=(10, 4))
+
+        for i in range(chains.shape[0]):
+            plt.plot(chains[i, l,:])
+
+        plt.xlabel('Sample')
+        plt.ylabel('Value')
+        plt.title(f'Trace Plot variable {l}')
+        plt.legend()
+        plt.show()
+        
+    if(diagnostic is True):
+        if(n==1):
+            samples.plot_trace()
+            samples.plot_autocorrelation()
+        else:
+            num_bins=20
+            plt.figure()
+            for num in range(post.shape[0]):        
+                
+                bin_edges = np.linspace(np.min(post[num,:]), np.max(post[num,:]), num_bins + 1)
+                hist, _ = np.histogram(post, bins=bin_edges)
+                hist=hist/post.shape[1]
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                print(hist)
+                plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
+
+                plt.xlabel('Value')
+                plt.ylabel('Probability')
+                plt.title('Distribution')
+                plt.legend()
+                plt.show()
+                
+            autocov=arviz.autocov(chains[:,0,:])
+            ess=arviz.ess(chains[:,0,:])
+            print(                f"********************  # ESS values = {ess}  ********************"
+                )
+
+
+            plt.figure()
+            plt.plot(autocov[0,:])
+            plt.title('Autocovariance first chain')
+            plt.xlabel('Lag')
+            plt.ylabel('Autocovariance')
+            plt.legend()
+            plt.show()
+    
+    return estimates
+
+
+
 
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
@@ -173,7 +248,7 @@ def getModel(params,num_inputs,name):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(1,activation='linear',name='HF')(hidden1)   
+        output = Dense(1,activation='linear',name='HF')(hidden1)     
     elif (name == 'LF'):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
@@ -195,10 +270,10 @@ def getModel(params,num_inputs,name):
         hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         output = Dense(1,activation='linear',name='HFlin')(hiddenlin)
         
-    elif(name == '3step'):
+    elif(name == 'Hfper'):
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(1,activation='linear',name='HF')(hidden1)   
+        hiddenlin = Dense(64,activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
+        output = Dense(1,activation='linear',name='HFper')(hiddenlin)    
         
     elif (name == 'GP'):
         inputs = Input(shape=(num_inputs,))

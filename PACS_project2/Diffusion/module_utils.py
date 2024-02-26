@@ -63,6 +63,9 @@ class FourierLayer(Layer):
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
+def sinusoidal_activation(x):
+    return K.square(K.sin(x))
+
 def  normalization(x):
     return (x - np.min(x)) / (
     np.max(x) - np.min(x)
@@ -339,6 +342,26 @@ def getModel(params,num_inputs, name):
             kernel_initializer=params["kernel_init"],
         )(inputs)
         output = Dense(1, activation="sigmoid", name="HFlin")(hiddenlin)
+
+    elif name == "Hfper":
+        inputs = Input(
+            shape=(num_inputs,)
+        )  # second NN (NN_Lin) in the 3-steps architecture
+        # Linear activation function: it approximates the high-fidelity data by a linear combiantion of the inputs
+        # and is thus responsible for capturing the linear correlations between the datasets
+        hiddenper = Dense(
+            64,
+            activation=sinusoidal_activation,
+            kernel_regularizer=l2(params["l2weight"]),
+            kernel_initializer=params["kernel_init"],
+        )(inputs)
+        hiddenper2 = Dense(
+            64,
+            activation=sinusoidal_activation,
+            kernel_regularizer=l2(params["l2weight"]),
+            kernel_initializer=params["kernel_init"],
+        )(hiddenper)
+        output = Dense(1, activation="linear", name="HFper")(hiddenper2)
 
     elif name == "3step":
         inputs = Input(
