@@ -32,12 +32,16 @@ import time
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
+def  normalization(x):
+    return (x - np.min(x)) / (
+    np.max(x) - np.min(x)
+)
 
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     
     MAP = tda.get_MAP(my_posterior)
     #if(adaptive_MH is True):
-    if algo == "RW":
+    if algo == "MH":
         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo=="AM":
         # adaptive metropolis
@@ -47,6 +51,8 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
         my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
     elif algo=="DREAMZ":
         my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
+    elif len(my_posterior)>1:
+        my_proposal=tda.MLDA(posteriors=my_posterior, proposal=my_proposal)
     else: 
         raise ValueError("Unknown algorithm %s"%algo)
     
@@ -243,19 +249,19 @@ def getOpti(name,lr):
     elif name == 'standardadam':
         return 'adam'
 
-def getModel(params,num_inputs,name):
+def getModel(params,num_inputs,name, num_outputs):
     if(name == 'HF'):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
         #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(3,activation='linear',name='HF')(hidden1)     
+        output = Dense(num_outputs,activation='linear',name='HF')(hidden1)     
     elif (name == 'LF'):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
         hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden2)
         hidden4 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden3)
-        output = Dense(3,activation='linear',name='LF')(hidden4)
+        output = Dense(num_outputs,activation='linear',name='LF')(hidden4)
         
     elif (name == 'Single'):
         inputs = Input(shape=(num_inputs,))
@@ -263,17 +269,17 @@ def getModel(params,num_inputs,name):
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden1)
         hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden2)
         hidden4 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden3)
-        output = Dense(3,activation='linear',name='Single')(hidden2)        
+        output = Dense(num_outputs,activation='linear',name='Single')(hidden2)        
         
     elif (name == 'Hflin'):
         inputs = Input(shape=(num_inputs,))
         hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(3,activation='linear',name='HFlin')(hiddenlin)
+        output = Dense(num_outputs,activation='linear',name='HFlin')(hiddenlin)
         
     elif(name == 'Hfper'):
         inputs = Input(shape=(num_inputs,))
         hiddenlin = Dense(64,activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(3,activation='linear',name='HFper')(hiddenlin)    
+        output = Dense(num_outputs,activation='linear',name='HFper')(hiddenlin)    
         
     elif (name == 'GP'):
         inputs = Input(shape=(num_inputs,))
@@ -282,8 +288,8 @@ def getModel(params,num_inputs,name):
         hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
         hidden4 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden3)
         GPlayer = Dense(2,activation='linear',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden4)
-        outputLF = Dense(3,activation='linear',name='LF')(GPlayer)
-        outputHF = Dense(3,activation='linear',name='HF')(GPlayer)   
+        outputLF = Dense(num_outputs,activation='linear',name='LF')(GPlayer)
+        outputHF = Dense(num_outputs,activation='linear',name='HF')(GPlayer)   
         output = [outputHF,outputLF]
         model = Model(inputs=inputs, outputs=output)
         opti = getOpti(params['opt'],params['lr'])
@@ -294,7 +300,7 @@ def getModel(params,num_inputs,name):
         inputs = Input(shape=(num_inputs,))
         hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
         hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
-        outputLF = Dense(3,activation='linear',name='LF')(hidden2)
+        outputLF = Dense(num_outputs,activation='linear',name='LF')(hidden2)
         outputadd = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
         merge = concatenate([outputLF,outputadd])
         hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(merge)
@@ -304,7 +310,7 @@ def getModel(params,num_inputs,name):
   
         #lincorr = Dense(int(params['nodes']),activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(outputLF)
         #merge2 = concatenate([hidden3,lincorr])
-        outputHF = Dense(3,activation='linear',name='HF')(hidden4)
+        outputHF = Dense(4,activation='linear',name='HF')(hidden4)
         output = [outputHF,outputLF]
         model = Model(inputs=inputs, outputs=output)
         opti = getOpti(params['opt'],params['lr'])

@@ -91,11 +91,11 @@ def import_data(name):#-> Tuple[np.array, np.array]:
 
     return (R, U)
 
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     
     MAP = tda.get_MAP(my_posterior)
     #if(adaptive_MH is True):
-    if algo == "RW":
+    if algo == "MH":
         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo=="AM":
         # adaptive metropolis
@@ -206,7 +206,7 @@ def add_noise(noise_std_data, noise_sta_output, data, output):
         data_flag=np.concatenate((data_flag,temp2))
     return (output_flag,data_flag)
 
-def getModel(params,num_inputs, name):
+def getModel(params,num_inputs, name, num_outputs):
     if name == "2step":
         inputs = Input(shape=(num_inputs,))  
         
@@ -232,7 +232,7 @@ def getModel(params,num_inputs, name):
             fourier_layer
         ) 
                 
-        output = Dense(1, activation="linear", name="HF")(hidden2)
+        output = Dense(num_outputs, activation="linear", name="HF")(hidden2)
 
 
     elif name == "LF":
@@ -272,7 +272,7 @@ def getModel(params,num_inputs, name):
         )(hidden3)
 
         
-        output = Dense(1, activation="linear", name="LF")(hidden4)
+        output = Dense(num_outputs, activation="linear", name="LF")(hidden4)
 
     elif name == "HF":
         inputs = Input(shape=(num_inputs,))  
@@ -299,7 +299,7 @@ def getModel(params,num_inputs, name):
             fourier_layer
         ) 
                 
-        output = Dense(1, activation="linear", name="HF")(hidden2)
+        output = Dense(num_outputs, activation="linear", name="HF")(hidden2)
 
     elif name == "Single":
         inputs = Input(shape=(num_inputs,))
@@ -327,7 +327,7 @@ def getModel(params,num_inputs, name):
             kernel_initializer=params["kernel_init"],
             kernel_regularizer=l2(params["l2weight"]),
         )(hidden3)
-        output = Dense(1, activation="sigmoid", name="Single")(hidden2)
+        output = Dense(num_outputs, activation="sigmoid", name="Single")(hidden2)
 
     elif name == "Hflin":
         inputs = Input(
@@ -341,7 +341,7 @@ def getModel(params,num_inputs, name):
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
-        output = Dense(1, activation="sigmoid", name="HFlin")(hiddenlin)
+        output = Dense(num_outputs, activation="sigmoid", name="HFlin")(hiddenlin)
 
     elif name == "Hfper":
         inputs = Input(
@@ -361,7 +361,7 @@ def getModel(params,num_inputs, name):
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(hiddenper)
-        output = Dense(1, activation="linear", name="HFper")(hiddenper2)
+        output = Dense(num_outputs, activation="linear", name="HFper")(hiddenper2)
 
     elif name == "3step":
         inputs = Input(
@@ -373,8 +373,8 @@ def getModel(params,num_inputs, name):
             kernel_regularizer=l2(params["l2weight"]),
             kernel_initializer=params["kernel_init"],
         )(inputs)
-        output = Dense(1, activation="sigmoid", name="HF")(hidden1)
-
+        output = Dense(num_outputs, activation="sigmoid", name="HF")(hidden1)
+# check end parametri 
     elif name == "GP":
         # architecture which is supposed to mimic the action of a GP
         inputs = Input(shape=(num_inputs,))

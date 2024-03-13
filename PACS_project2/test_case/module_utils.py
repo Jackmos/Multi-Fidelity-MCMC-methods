@@ -48,11 +48,11 @@ import time
     
 #     return estimates
 
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     
     MAP = tda.get_MAP(my_posterior)
     #if(adaptive_MH is True):
-    if algo == "RW":
+    if algo == "MH":
         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo=="AM":
         # adaptive metropolis
@@ -164,7 +164,7 @@ def plot_hist(estimates, real_x, output1,output2):
     values1=real_x
     diff_output=np.abs(output1-output2)
     diff_value=np.abs(values1-values2)
-    print(f"the estimated values are {diff_value}\n the difference between outputs of two models are {diff_output}")
+    print(f"the difference in the estimated values are {diff_value}\n the difference between outputs of two models are {diff_output}")
     values = np.vstack((values1, values2))
 
     # Creare categorie in base alla lunghezza di values

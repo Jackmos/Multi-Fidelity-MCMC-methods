@@ -61,11 +61,10 @@ def import_data(name):#-> Tuple[np.array, np.array]:
 
     return (R, U)
 
-def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="RW",dim=0):
+def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     
     MAP = tda.get_MAP(my_posterior)
-    #if(adaptive_MH is True):
-    if algo == "RW":
+    if algo == "MH":
         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo=="AM":
         # adaptive metropolis
@@ -94,7 +93,7 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
 
 def plot_hist(estimates, real_x, output1,output2):   
     values2=estimates
-    values1=real_x[:,0] #! [:,0] aggiunto solo per questo caso !
+    values1=real_x
     print(np.abs(values2-values1))
     values = np.vstack((values1, values2))
 

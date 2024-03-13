@@ -14,7 +14,6 @@ from tensorflow.keras.layers import (
 )  
 from keras.regularizers import l2, l1
 from sklearn.model_selection import KFold
-import numpy as np
 from keras.optimizers import Adam, Nadam, Adamax, RMSprop
 import keras.backend as K
 import tensorflow as tf
@@ -94,6 +93,7 @@ class Function:
             jacobian[:, i] = (func_pos - func_neg) / (2 * h)
 
         return jacobian
+    
 def compute_time(function):
     def wrapper(*args, **kwargs):
         init = time.time()
@@ -149,19 +149,24 @@ class Neural_Network(INetwork):
         self.verbose=verbose
         self.hist=None
         self.data_train=data_train
+        # NON VALE LA PENA SALVARSI SOLO LE DIMENSIONI?
         self.output_train=output_train
         self.transformations=transformations
+        self.input_shape=1
+        self.output_shape=1
+
         if data_train is not None and len(data_train.shape) > 1:
-            self.shape_value = data_train.shape[1]
-        else:
-            self.shape_value = 1  
+            self.input_shape = data_train.shape[1]
+      
+        if output_train is not None and len(output_train.shape) > 1:
+            self.output_shape = output_train.shape[1] 
 
         if (do_HPO or params is None):
             if (output_train is None or data_train is None):
                 warning_message = "Not enough data given!"
                 warnings.warn(warning_message, UserWarning)
             self.params=self.HPO(data_train,output_train)
-        self.model = getModel(self.params,self.shape_value,self.name)
+        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)
 
         if(train):
             self.hist=self.training(data_train,output_train,epoch=self.N,batch=self.n) 
@@ -180,22 +185,35 @@ class Neural_Network(INetwork):
 
     def prediction(self,x_test):
         if(self.verbose):
-            y_pred=self.model.predict(x_test)[:,0]
+            y_pred=self.model.predict(x_test)#[:,0]             # <-------------  commentato il 6/03
         else:
             with Suppressor():
-                y_pred = self.model.predict(x_test)[:,0]
+                y_pred = self.model.predict(x_test)#[:,0]       # <--------------- commentato il 6/03
         return y_pred  
     
     def wrapper_prediction(self,x_test):
-        
+        # ricontrolla
+        # ---- caso shear cube ----
+        # if (x_test.ndim==1 and self.data_train.shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
+        #     x_test=x_test.reshape(-1,1).T
+        # elif (x_test.ndim==1):
+        #     x_test=x_test.reshape(-1,1)
+        # -----------
         if (x_test.ndim==1):
             x_test=x_test.reshape(-1,1)
+            # ----- sostituito 
         #print(x_test.shape)
         if self.transformations:
             x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
         else:
             x_final = x_test
-        return self.prediction(x_final)
+            
+        x_final=np.tile(x_final,(self.inputs.shape[0],1))
+        #print(x_final.shape)
+        #print(np.concatenate((self.inputs,x_final),axis=1).shape)
+        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()
+        #print(rep.shape)
+        return rep
     
     def save(self,discr="_",place=""):
         print("saving the model ...")
@@ -238,8 +256,6 @@ class Neural_Network(INetwork):
             cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
             
             
-            
-            
         my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
         
         if(y_obs is None):
@@ -255,7 +271,7 @@ class Neural_Network(INetwork):
         if(rwmh_cov is None):
             rwmh_cov = np.eye(len(x_real))
             
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive)
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo)
         
         if diagnostic is True:
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
@@ -324,7 +340,7 @@ class Neural_Network(INetwork):
     def objective(self,par): 
         #print(self.name)
         K.clear_session()
-        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.shape_value)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
+        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.input_shape)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
         return {"loss": CVres, "params": par, "status": STATUS_OK}   
 
 
@@ -370,14 +386,23 @@ class MultiFidelity(INetwork):
         self.names=names
         self.Ns=N
         self.ns=n
+        self.data_train=data_train
         self.steps=int((len(names)-1)/(len(data_train)-1))+1
         self.model_list = []
         self.outputs = np.empty((0,0))
         self.transformations=[]
-        
-        if len(data_train)!=len(output_train) or data_train is None or output_train is None:
+        self.input_shape=1
+        self.output_shape=1
+
+        if len(data_train)!=len(output_train) or data_train is None or output_train is None or len(data_train)==0 or len(output_train)==0:
             raise ValueError('The data are incoherent or insufficient')
-        
+
+        if data_train is not None and len(data_train[0].shape) > 1:
+            self.input_shape = data_train[0].shape[1] 
+
+        if output_train is not None and len(output_train[0].shape) > 1:
+            self.output_shape = output_train[0].shape[1] 
+
         K.clear_session()
         if len(params)<len(self.names):
             diff = len(self.names) - len(params)
@@ -413,19 +438,7 @@ class MultiFidelity(INetwork):
         for index, _ in enumerate(self.names):
             #print("check")
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
-        return self.outputs[:,-1]
-    
-    def wrapper_prediction(self,x_test):
-        
-        if (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-        return self.prediction(x_final)
-    
+        return self.outputs[:,-self.output_shape:]
 
 
     def performance(self,data_test,output_test,position=None):
@@ -453,9 +466,143 @@ class MultiFidelity(INetwork):
         print(f"R^2: {r2}")
         
         return (test_mse,r2)
+    
+    @compute_time
+    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
+            # I should insert the 
+        self.transformations=transformation
+        self.inputs=x_data
+        # rivedere la questione dimensioni (x_real!=y_obs)
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+
+        if (N<=burn_in):
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning) 
+
+        if(cov_prior is None):
+            cov_prior=mean_prior*0.2
+
+        if(cov_likelihood is None):
+            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
+        
+        # prior
+        if(mean_prior.shape[0]==1):
+            my_prior=beta(1.,1.)
+        else:
+            my_prior = multivariate_normal(mean_prior, cov_prior) 
+
+        if(y_obs is None):
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
+            y_obs=y_obs.flatten()
+        # likelihood
+        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+        # posterior
+        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+        
+        print(f"real values are {x_real}")
+        
+        if(rwmh_cov is None):
+            rwmh_cov = np.eye(len(x_real))
+            
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
+        
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
+    
+
+
+    def wrapper_prediction(self,x_test,multi_input=False):
+        # ricontrolla, se usata solo per param inv si potra mettere private
+    
+        #if (x_test.ndim==1 and self.data_train[0].shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
+        #    x_test=x_test.reshape(-1,1).T
+        if (x_test.ndim==1):
+            x_test=x_test.reshape(-1,1)
+        #print(x_test.shape)
+        x_test=x_test.T # VEDI
+        if self.transformations:
+            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
+        else:
+            x_final = x_test
+            # mettere messaggio di errore quando inputs non riempiton 
+        #print(self.inputs.shape)
+        x_final=np.tile(x_final,(self.inputs.shape[0],1))
+        #print(x_final.shape)
+        #print(np.concatenate((self.inputs,x_final),axis=1).shape)
+        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()
+        #print(rep.shape)
+        return rep
+
 
     @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="RW",transformation=[]):
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
+        # transformations is a list of lambda functions
+        self.transformations=transformation
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim=y_obs.shape[0]
+        else: 
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)    
+        if (N<=burn_in):
+            warning_message = "number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)        
+        
+        if(cov_prior is None):
+            cov_prior=mean_prior*0.2
+        if(cov_likelihood is None):
+            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
+        
+        if(mean_prior.shape[0]==1):
+            my_prior=beta(1.,1.)
+        else:
+            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
+        
+        if(y_obs is None):
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
+        else:
+            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
+
+        if levels>1:
+            my_loglike=[]
+            my_posterior=[]
+            if(levels>=len(self.model_list)):
+                warning_message = "number of levels is exceeding the number of models"
+                warnings.warn(warning_message, UserWarning)
+            else:    
+                for i in range(levels):    
+                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
+                    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
+        else:
+            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+        
+        print(f"real values are {x_real}")
+        
+        if(rwmh_cov is None):
+            rwmh_cov = np.eye(len(x_real))
+            
+        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
+        
+        if diagnostic is True:
+            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
+        
+        return estimates
+    
+    @compute_time
+    def inverse_ML(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
         # transformations is a list of lambda functions
         self.transformations=transformation
 
@@ -486,7 +633,10 @@ class MultiFidelity(INetwork):
             y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
         
         my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+        my_posterior=[]
+
+        for i in range(len(self.model_list)):
+            my_posterior.append(tda.Posterior(my_prior, my_loglike, self.model_list[i].wrapper_prediction))
         
         print(f"real values are {x_real}")
         
@@ -499,6 +649,12 @@ class MultiFidelity(INetwork):
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
         return estimates
+
+
+
+
+
+
 
     # CUQIPY
     @compute_time
@@ -589,6 +745,10 @@ class Intermediate(INetwork):
         self.output_train=output_train
         self.transformations=[]
         
+        self.input_shape=1
+        self.output_shape=1
+
+
         if len(data_train)!=2 or len(output_train)!=2:
             raise ValueError('The data are incoherent or insufficient')
                 
@@ -598,16 +758,17 @@ class Intermediate(INetwork):
         
         # number of inputs of the matrix (columns)  (DUBBIO: non si confonde con lista del caso multifidelity?)
         if data_train is not None and len(data_train.shape) > 1:
-            self.shape_value = data_train.shape[1]
-        else:
-            self.shape_value = 1 
+            self.input_shape=data_train.shape[1]
+
+        if output_train is not None and len(output_train.shape) > 1:
+            self.output_shape=output_train.shape[1]
 
         if (do_HPO or params is None):
             if (output_train is None or data_train is None):
                 warning_message = "Not enough data given!"
                 warnings.warn(warning_message, UserWarning)
             self.params=self.HPO(data_train,output_train)
-        self.model = getModel(self.params,self.shape_value,self.name)
+        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)
 
         if(train):
         
@@ -640,8 +801,11 @@ class Intermediate(INetwork):
         return y_pred  
     
     def wrapper_prediction(self,x_test):
+           # ricontrolla
         
-        if (x_test.ndim==1):
+        if (x_test.ndim==1 and self.data_train.shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
+            x_test=x_test.reshape(-1,1).T
+        elif (x_test.ndim==1):
             x_test=x_test.reshape(-1,1)
         #print(x_test.shape)
         if self.transformations:
@@ -675,7 +839,7 @@ class Intermediate(INetwork):
     
     # TO BE MODIFIED!!
     @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="RW",transformation=[]):
+    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
         # transformations is a list of lambda functions
         self.transformations=transformation
 
@@ -782,7 +946,7 @@ class Intermediate(INetwork):
     def objective(self,par): 
         #print(self.name)
         K.clear_session()
-        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.shape_value)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
+        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.input_shape)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
         return {"loss": CVres, "params": par, "status": STATUS_OK}   
 
 
@@ -875,9 +1039,9 @@ class FourierLayer(Layer):
 
 
 
-def kCrossVal(N,Nepo,x,y,params,name,shape_value,p=1):
+def kCrossVal(N,Nepo,x,y,params,name,input_shape,p=1):
     #K.clear_session()
-    model = getModel(params,shape_value,name)
+    model = getModel(params,input_shape,name,y.shape[1]) # check che y.shape[1] sia corretto 
     Nfold = int(N/p)
     score = np.zeros([Nfold])
     cv = KFold(n_splits=Nfold,shuffle=True)
@@ -894,12 +1058,11 @@ def kCrossVal(N,Nepo,x,y,params,name,shape_value,p=1):
       i = i+1
     return np.mean(score)
 
-
-def kCrossValSingle(N, Nepo, x, y, params, name,shape_value):
+def kCrossValSingle(N, Nepo, x, y, params, name,input_shape):
     score = np.zeros([N])
     cv = KFold(N)
     splits = cv.split(x)
-    model = getModel(params,shape_value, name)
+    model = getModel(params,input_shape, name,y.shape[1]) # check che y.shape[1] sia corretto 
     i = 0
     for train_index, test_index in splits:
         x_train = x[train_index]
@@ -912,14 +1075,15 @@ def kCrossValSingle(N, Nepo, x, y, params, name,shape_value):
     return np.mean(score)
 
 
-def kCrossValGP(Nhf,Nlf,Nepo,xhf,yhf,xlf,ylf,params,name,shape_value,p=1):
+def kCrossValGP(Nhf,Nlf,Nepo,xhf,yhf,xlf,ylf,params,name,input_shape,p=1):
     Nfolds = int(Nhf/p)
     score = np.zeros([Nfolds])
     cv = KFold(n_splits = Nfolds, shuffle = True)
     splits = cv.split(xhf)
     i=0
     N = Nhf + Nlf
-    model = getModel(params,shape_value,name)
+
+    model = getModel(params,input_shape,name,yhf.shape[1]) # check che y.shape[1] sia corretto 
     for train_index, test_index in splits:
       xhf_train = xhf[train_index,:]
       yhf_train = yhf[train_index]
