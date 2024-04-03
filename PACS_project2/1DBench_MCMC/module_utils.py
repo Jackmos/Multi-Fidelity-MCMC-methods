@@ -34,14 +34,18 @@ def custom_activation(x):
 
 
 def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
-    
-    MAP = tda.get_MAP(my_posterior)
+    #print("check 1")
+    if(dim!=1):
+         MAP = tda.get_MAP(my_posterior)
+    else:
+        MAP=None
     #if(adaptive_MH is True):
+   # print("check2")
     if algo == "MH":
-        my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+        my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive) # gamma= adaptivity coefficient
     elif algo=="AM":
         # adaptive metropolis
-        my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)
+        my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)   # sd am scaling parameter, gamma
     elif algo=="CN":
         # preconditioned Crank Nicolson
         my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
@@ -50,7 +54,7 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
     else: 
         raise ValueError("Unknown algorithm %s"%algo)
     
-    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,force_sequential=True)
+    my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
     idata = tda.to_inference_data(my_chains, burnin=burnin)
     estimates=np.array(az.summary(idata)['mean'])
     print(f"estimated values are {estimates}")
@@ -179,7 +183,7 @@ def plot_hist(estimates, real_x, output1,output2):
     values1=real_x
     diff_output=np.abs(output1-output2)
     diff_value=np.abs(values1-values2)
-    print(f"the difference between estimated values {diff_value}\n the difference between outputs of two models are {diff_output}")
+    print(f"the difference between estimated values {diff_value}\n")
     values = np.vstack((values1, values2))
 
     # Creare categorie in base alla lunghezza di values
@@ -205,22 +209,22 @@ def plot_hist(estimates, real_x, output1,output2):
     # Mostra il plot
     plt.show()
     
-    values2 = output2
-    values1=output1
+    # values2 = output2
+    # values1=output1
 
-    values = np.vstack((values1, values2))
+    # values = np.vstack((values1, values2))
 
-    # Creazione del plot
-    for i in range(values.shape[0]):
-        plt.bar(bar_positions[i], values[i, :], width=bar_width)
+    # # Creazione del plot
+    # for i in range(values.shape[0]):
+    #     plt.bar(bar_positions[i], values[i, :], width=bar_width)
 
 
-    plt.ylabel('Value')
-    plt.title('Output')
-    plt.xticks(categories)
-    plt.legend(["Real value", "Estimate"])
-    # Mostra il plot
-    plt.show()
+    # plt.ylabel('Value')
+    # plt.title('Output')
+    # plt.xticks(categories)
+    # plt.legend(["Real value", "Estimate"])
+    # # Mostra il plot
+    # plt.show()
     return
     
     

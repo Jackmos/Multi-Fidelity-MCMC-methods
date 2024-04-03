@@ -154,6 +154,7 @@ class Neural_Network(INetwork):
         self.transformations=transformations
         self.input_shape=1
         self.output_shape=1
+        self.inputs=None
 
         if data_train is not None and len(data_train.shape) > 1:
             self.input_shape = data_train.shape[1]
@@ -176,6 +177,10 @@ class Neural_Network(INetwork):
             plt.ylabel('MSE')
             plt.legend()
             plt.show()
+
+    def variable_input(self, input_discr):
+        # function to give a value at the input variable when solving the inverse problem from a Multilevel perspective
+        self.inputs = input_discr
           
     @compute_time
     def training(self,x,y,epoch,batch):
@@ -188,6 +193,10 @@ class Neural_Network(INetwork):
             y_pred=self.model.predict(x_test)#[:,0]             # <-------------  commentato il 6/03
         else:
             with Suppressor():
+#                print(x_test)
+#                print("...")
+#                print(self.model.predict(x_test)[:,0])
+                print(x_test)
                 y_pred = self.model.predict(x_test)#[:,0]       # <--------------- commentato il 6/03
         return y_pred  
     
@@ -199,15 +208,19 @@ class Neural_Network(INetwork):
         # elif (x_test.ndim==1):
         #     x_test=x_test.reshape(-1,1)
         # -----------
+        print("x_test")
+        print(x_test.shape)
         if (x_test.ndim==1):
             x_test=x_test.reshape(-1,1)
             # ----- sostituito 
+        x_test=x_test.T # VEDI
         #print(x_test.shape)
         if self.transformations:
             x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
         else:
             x_final = x_test
-            
+        print("x_final")
+        print(x_final)    
         x_final=np.tile(x_final,(self.inputs.shape[0],1))
         #print(x_final.shape)
         #print(np.concatenate((self.inputs,x_final),axis=1).shape)
@@ -222,8 +235,13 @@ class Neural_Network(INetwork):
 
     
     def performance(self,data_test,output_test):
-        pred=self.wrapper_prediction(data_test)#[:,0]
+
+        data=copy.copy(data_test)
+        pred=self.prediction(data)#[:,0]pred=self.wrapper_prediction(data_test)#[:,0]
         #print(pred.shape)
+        print(data.shape)
+        print(output_test.shape)
+        print(pred.shape)
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
 
@@ -433,11 +451,17 @@ class MultiFidelity(INetwork):
     
     def prediction(self,data_test):
         self.outputs = data_test
+
         if(len(self.outputs.shape)==1):
             self.outputs=self.outputs.reshape(-1,1)
+
         for index, _ in enumerate(self.names):
-            #print("check")
+            #print(index)
+            #print(self.outputs)
             self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
+        #print(self.output_shape)
+        #print("output")
+        #print(self.outputs[:,-self.output_shape:])
         return self.outputs[:,-self.output_shape:]
 
 
@@ -454,8 +478,10 @@ class MultiFidelity(INetwork):
                     (data,  self.model_list[i].wrapper_prediction(data).reshape(-1,1)),axis=1
                 ) 
         
-        pred=self.model_list[position-1].wrapper_prediction(data)#[:,0]
-    
+        pred=self.model_list[position-1].prediction(data)#[:,0]
+        print(output_test)
+        print("---")
+        print(pred)
         #print(pred.shape)
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
@@ -468,10 +494,11 @@ class MultiFidelity(INetwork):
         return (test_mse,r2)
     
     @compute_time
-    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
+    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
             # I should insert the 
         self.transformations=transformation
         self.inputs=x_data
+
         # rivedere la questione dimensioni (x_real!=y_obs)
         if x_real is not None:
             dim = x_real.shape[0]
@@ -492,28 +519,58 @@ class MultiFidelity(INetwork):
             cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
         
         # prior
-        if(mean_prior.shape[0]==1):
-            my_prior=beta(1.,1.)
-        else:
-            my_prior = multivariate_normal(mean_prior, cov_prior) 
-
+        # if(mean_prior.shape[0]==1):
+        #     my_prior=beta(1.,1.)
+        # else:
+        #     my_prior = multivariate_normal(mean_prior, cov_prior) 
+        my_prior = multivariate_normal(mean_prior, cov_prior) 
         if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check
+            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check   
         else:
             y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
-            y_obs=y_obs.flatten()
+            print(y_obs.shape)
+            if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
+                y_obs=y_obs.flatten() #
+
+        #print(x_data)
+        print(y_obs.shape)
+        # plt.figure()
+        # plt.plot(x_data,y_obs,'ro', label = 'y_obs')
+        # plt.legend()
+        # plt.show()
+
         # likelihood
-        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-        # posterior
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+        if levels>1:
+            my_loglike=[]
+            my_posterior=[]
+            if(levels>len(self.model_list)):
+                warning_message = "number of levels is exceeding the number of models"
+                warnings.warn(warning_message, UserWarning)
+            else:
+                # caso l> 2, ancora da implementare per gestione input reti     
+                #for i in range(levels): 
+                #    self.model_list[i].variable_input(x_data)  
+                #    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
+                #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
+                ## SEZIONE TEMPORANEA
+                for i in range(levels):
+                    self.model_list[i].variable_input(x_data) 
+                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
+                my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
+                print(len(my_posterior))
+                ## SEZIONE TEMPORANEA
         
+        else:
+            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+           # print(my_posterior)
         print(f"real values are {x_real}")
         
         if(rwmh_cov is None):
             rwmh_cov = np.eye(len(x_real))
             
         estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-        
+
         if diagnostic is True:
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
@@ -526,6 +583,10 @@ class MultiFidelity(INetwork):
     
         #if (x_test.ndim==1 and self.data_train[0].shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
         #    x_test=x_test.reshape(-1,1).T
+        #print("x_test")
+        #print(x_test.shape)
+        #print("x_test")
+        #print(x_test)
         if (x_test.ndim==1):
             x_test=x_test.reshape(-1,1)
         #print(x_test.shape)
@@ -536,11 +597,29 @@ class MultiFidelity(INetwork):
             x_final = x_test
             # mettere messaggio di errore quando inputs non riempiton 
         #print(self.inputs.shape)
+        #print("x_final")
+        #print(x_final)     
         x_final=np.tile(x_final,(self.inputs.shape[0],1))
+        #print("x_final")
+        #print(x_final) 
         #print(x_final.shape)
         #print(np.concatenate((self.inputs,x_final),axis=1).shape)
-        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()
+
+        # print(self.inputs)
+        # print(x_final)
+        
+        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1))#.flatten()
+        if rep.shape[1]==1: # serve per casi bentchmark
+            rep=rep.flatten()
+        # if self.inputs.ndim == 1 and x_final.ndim == 1:
+        #     rep = self.prediction(np.concatenate((self.inputs, x_final))).flatten()
+        # else:
+        #     # Altrimenti, concatena lungo l'asse 1
+        #     rep = self.prediction(np.concatenate((self.inputs, x_final), axis=1)).flatten()
+
         #print(rep.shape)
+        #print("rep")
+        #print(rep)
         return rep
 
 
@@ -649,10 +728,6 @@ class MultiFidelity(INetwork):
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
         return estimates
-
-
-
-
 
 
 
