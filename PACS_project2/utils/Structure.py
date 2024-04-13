@@ -529,11 +529,11 @@ class MultiFidelity(INetwork):
         else:
             y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
             print(y_obs.shape)
-            if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
-                y_obs=y_obs.flatten() #
+            #if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
+            y_obs=y_obs.flatten() #
 
         #print(x_data)
-        print(y_obs.shape)
+        #print(y_obs.shape)
         # plt.figure()
         # plt.plot(x_data,y_obs,'ro', label = 'y_obs')
         # plt.legend()
@@ -599,7 +599,9 @@ class MultiFidelity(INetwork):
         #print(self.inputs.shape)
         #print("x_final")
         #print(x_final)     
+        #print(x_final)
         x_final=np.tile(x_final,(self.inputs.shape[0],1))
+        #print(x_final)
         #print("x_final")
         #print(x_final) 
         #print(x_final.shape)
@@ -608,9 +610,15 @@ class MultiFidelity(INetwork):
         # print(self.inputs)
         # print(x_final)
         
-        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1))#.flatten()
-        if rep.shape[1]==1: # serve per casi bentchmark
-            rep=rep.flatten()
+        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()#.flatten()
+        # print("before")
+        # print(rep)
+        # print(rep.shape)
+        # # if rep.shape[1]==1: # serve per casi bentchmark
+        # #     rep=rep.flatten()
+        # print("after")
+        # print(rep)
+        # print(rep.shape)
         # if self.inputs.ndim == 1 and x_final.ndim == 1:
         #     rep = self.prediction(np.concatenate((self.inputs, x_final))).flatten()
         # else:

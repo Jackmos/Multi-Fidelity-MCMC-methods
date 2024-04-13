@@ -39,6 +39,8 @@ def  normalization(x):
 
 def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     #print("check 1")
+    print("dim")
+    print(dim)
     if(dim!=1):
         print("OK")
         MAP = tda.get_MAP(my_posterior)
@@ -65,7 +67,7 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
 
 
    # used fot the first lv 4 params 
-    # #if(adaptive_MH is True):
+    #if(adaptive_MH is True):
     # if algo == "MH":
     #     MAP = tda.get_MAP(my_posterior)
     #     my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
