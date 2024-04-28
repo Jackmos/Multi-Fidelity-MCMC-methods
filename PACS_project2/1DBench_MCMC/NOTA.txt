@@ -1,3 +1,0 @@
-CORREGGERE casi base togliendo problema inverso, 
-
-creari problemi inversi con parametro variante
