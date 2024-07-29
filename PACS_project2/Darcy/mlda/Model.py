@@ -137,3 +137,8 @@ def project_eigenpairs(model_fine, model_coarse):
         psi_coarse = fn.project(psi_fine, model_coarse.solver.V)
         model_coarse.random_process.eigenvectors[:, i] = \
             psi_coarse.vector()[:]
+        ###
+    print("coarse")
+    print(model_coarse.random_process.eigenvalues)
+    print("fine")
+    print( model_fine.random_process.eigenvalues)

@@ -1,6 +1,7 @@
 import os as os
 import sys as sys
 import time as time
+import fenics as fn
 
 from itertools import product
 
@@ -13,7 +14,6 @@ import numpy as np
 import pymc3 as pm
 import theano.tensor as tt
 
-import fenics as fn
 
 
 sys.path.insert(1, 'mlda/') # import groundwater flow model utils (including FEniCS code)
@@ -187,7 +187,7 @@ my_models[-1].solve()
 
 # Save true parameters of finest model
 true_parameters = my_models[-1].random_process.parameters
-
+## SOLVE COARSER MODELS with related theta (given) and \mu prevosuly defined (row 181)
 my_models[0].solve(true_parameters)
 my_models[1].solve(true_parameters)
 
@@ -223,7 +223,7 @@ plt.grid(False)
 plt.savefig('coarse_and_fine_model.png', dpi=300)
 
 plt.figure(figsize=(8,6))
-plt.plot(my_models[-1].random_process.eigenvalues)
+plt.plot(my_models[-1].random_process.eigenvalues)   # <-eigenvalues
 plt.savefig('eigenvalues.png', dpi=300)
 
 # Define the sampling points.

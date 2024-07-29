@@ -63,7 +63,6 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
         az.plot_trace(idata)
         print("Autocorrelation...")
         az.plot_autocorr(idata)
-        #az.plot_violin(idata)
         
     
     return estimates
@@ -206,25 +205,9 @@ def plot_hist(estimates, real_x, output1,output2):
     plt.legend(["Real value", "Estimate"])
 
 
-    # Mostra il plot
+
     plt.show()
-    
-    # values2 = output2
-    # values1=output1
 
-    # values = np.vstack((values1, values2))
-
-    # # Creazione del plot
-    # for i in range(values.shape[0]):
-    #     plt.bar(bar_positions[i], values[i, :], width=bar_width)
-
-
-    # plt.ylabel('Value')
-    # plt.title('Output')
-    # plt.xticks(categories)
-    # plt.legend(["Real value", "Estimate"])
-    # # Mostra il plot
-    # plt.show()
     return
     
     
@@ -234,6 +217,10 @@ def custom_loss(y_pred,y_true):
     y_pred_loss = tf.boolean_mask(y_pred,goodind)
     y_pred_true = tf.boolean_mask(y_true,goodind)
     return K.mean(K.square(y_pred_loss - y_pred_true))
+
+
+
+
 
 def getOpti(name,lr):
     if name == 'Adam':
@@ -246,6 +233,10 @@ def getOpti(name,lr):
         return RMSprop(learning_rate=lr)
     elif name == 'standardadam':
         return 'adam'
+
+
+
+
 
 def getModel(params,num_inputs,name,num_outputs):
     if(name == 'HF'):

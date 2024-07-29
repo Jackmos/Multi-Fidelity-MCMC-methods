@@ -44,25 +44,25 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
     print(my_posterior)
     if(dim!=1):
         print("OK")
-        MAP = tda.get_MAP(my_posterior[-1])
+        MAP = tda.get_MAP(my_posterior)
     else:
         MAP=None
     #if(adaptive_MH is True):
    # print("check2")
     if algo == "MH":
         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive) # gamma= adaptivity coefficient
-        my_chains = tda.sample(my_posterior[-1], my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
+        my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
     elif algo=="AM":
         # adaptive metropolis
         my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)   # sd am scaling parameter, gamma
-        my_chains = tda.sample(my_posterior[-1], my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
+        my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
     elif algo=="CN":
         # preconditioned Crank Nicolson
         my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
-        my_chains = tda.sample(my_posterior[-1], my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
+        my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
     elif algo=="DREAMZ":
         my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
-        my_chains = tda.sample(my_posterior[-1], my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
+        my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
     elif algo=="MLDA":
         # proposal parameter: proposal for the coarsest
         my_proposal=tda.MLDA(posteriors=my_posterior, subsampling_rates=[5,5],adaptive_error_model='state-independent',initial_parameters=MAP,store_coarse_chain=True,proposal=tda.AdaptiveMetropolis(C0=rwmh_cov))
@@ -70,52 +70,7 @@ def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling
     else: 
         raise ValueError("Unknown algorithm %s"%algo)
     
-    #my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
 
-
-
-
-   # used fot the first lv 4 params 
-    #if(adaptive_MH is True):
-    # if algo == "MH":
-    #     MAP = tda.get_MAP(my_posterior)
-    #     my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
-    #     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
-
-    # elif algo=="AM":
-    #     # adaptive metropolis
-    #     MAP = tda.get_MAP(my_posterior)
-
-    #     my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)
-    #     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
-
-    # elif algo=="CN":
-    #     # preconditioned Crank Nicolson
-    #     MAP = tda.get_MAP(my_posterior)
-
-    #     my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
-    #     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
-
-    # elif algo=="DREAMZ":
-    #     MAP = tda.get_MAP(my_posterior)
-
-    #     my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
-    #     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
-
-    # elif algo=="MLDA":
-    #     # puoi metterci MAP usando solo la posterior relativa al caso ottimale 
-    #     # vedi esempio libreria con numero diverso di dati 
-    #     print(len(my_posterior))
-    #     MAP = tda.get_MAP(my_posterior[1])
-    #     #my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)
-
-    #    my_proposal=tda.MLDA(posteriors=my_posterior, subsampling_rates=[5],adaptive_error_model='state-independent',initial_parameters=MAP,store_coarse_chain=True,proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0))
-    #     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n,initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
-
-    # else: 
-    #     raise ValueError("Unknown algorithm %s"%algo)
-    
-    #my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, initial_parameters=MAP,subsampling_rate=5, adaptive_error_model='state-independent')
     idata = tda.to_inference_data(my_chains, burnin=burnin)
     estimates=np.array(az.summary(idata)['mean'])
     print(f"estimated values are {estimates}")
