@@ -301,6 +301,20 @@ def getModel(params,num_inputs,name,num_outputs):
         output = Dense(num_outputs, activation='linear')(a)
 
 
+inputs = Input(shape=(None, num_inputs))
+a = Bidirectional(LSTM(params['nodes'], return_sequences=True,
+                       kernel_regularizer=l2(params['l2_reg'])))(inputs)
+a = Dropout(params['dropout'])(a)
+a = Bidirectional(LSTM(params['nodes'], return_sequences=True,
+                       kernel_regularizer=l2(params['l2_reg'])))(a)
+
+# Adding a Fourier Layer
+a = FourierLayer(output_dim=params['nodes'])(a)
+
+a = Dense(params['nodes_dense'], activation=custom_activation,
+          kernel_regularizer=l2(params['l2_reg']))(a)
+
+output = Dense(num_outputs, activation='linear')(a)
 
 
 

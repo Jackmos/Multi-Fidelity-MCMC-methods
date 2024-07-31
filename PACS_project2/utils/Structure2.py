@@ -342,7 +342,7 @@ class Neural_Network(INetwork):
         n: int = 10, 
         train: bool = True, 
         do_HPO: bool = False, 
-        transformations: Optional[list] = None, 
+        transformations:Optional[List[Any]] = None, 
         verbose: bool = False
     ):
         """
@@ -414,7 +414,7 @@ class Neural_Network(INetwork):
             plt.legend()
             plt.show()
 
-    def variable_input(self, input_discr: Any) -> None:
+    def _set_variable_input(self, input_discr: Any) -> None:
         """
         Sets the input variable when solving the inverse problem from a Multilevel perspective.
         
@@ -544,7 +544,7 @@ class Neural_Network(INetwork):
                 #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
                 ## SEZIONE TEMPORANEA
                 for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
+                    self.model_list[i]._set_variable_input(x_data) 
                     my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
                 my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
                 print(len(my_posterior))
@@ -2165,7 +2165,7 @@ class LSTM(INetwork):
                 #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
                 ## SEZIONE TEMPORANEA
                 for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
+                    self.model_list[i]._set_variable_input(x_data) 
                     my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
                 my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
                 print(len(my_posterior))
@@ -2367,7 +2367,7 @@ class Intermediate(INetwork):
                 #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
                 ## SEZIONE TEMPORANEA
                 for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
+                    self.model_list[i]._set_variable_input(x_data) 
                     my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
                 my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
                 print(len(my_posterior))

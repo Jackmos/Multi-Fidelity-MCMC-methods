@@ -670,6 +670,90 @@ def MCMC(
     return estimates
 
 # MCMC Sampling Function for CUQI
+# def MCMC_cuqi(
+#     y: Any, 
+#     x: Any, 
+#     observation: np.ndarray, 
+#     N: int, 
+#     burn_in: int, 
+#     n: int = 1, 
+#     diagnostic: bool = True, 
+#     algo: str = "MH", 
+#     adapt: bool = False, 
+#     scale: float = 0.3
+# ) -> np.ndarray:
+#     """Perform MCMC sampling using CUQI library."""
+#     dim = observation.shape[0]
+#     x_init = np.random.rand(dim)
+#     estimates = np.empty((1, 0))   # Dimension of parameters to estimate
+#     chains = np.empty((0, 1, N - burn_in)) 
+#     post = np.empty((1, 0))         
+#     posterior = JointDistribution(y, x)(y=observation)
+
+#     # Loop through the number of chains
+#     for i in range(n):
+#         if algo == "NUTS":
+#             sampler = NUTS(posterior, x0=x_init)
+#         elif algo == "MH":
+#             sampler = MH(posterior, scale=scale) if not adapt else MH(posterior)
+#         elif algo == "pCN":
+#             sampler = pCN(posterior, x0=x_init)
+#         else:
+#             raise ValueError(f"Unknown algorithm {algo}")
+
+#         samples = sampler.sample_adapt(N - burn_in, burn_in) if adapt else sampler.sample(N - burn_in, burn_in)
+
+#         estimates = np.column_stack((estimates, samples.mean()[:, np.newaxis]))
+#         chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
+#         post = np.concatenate((post, samples.samples), axis=1)
+
+#         print(f"Mean values = {estimates.mean(axis=1)}")
+
+#     # Plot trace plots
+#     for l in range(chains.shape[1]):
+#         plt.figure(figsize=(10, 4))
+#         for i in range(chains.shape[0]):
+#             plt.plot(chains[i, l, :])
+#         plt.xlabel('Sample')
+#         plt.ylabel('Value')
+#         plt.title(f'Trace Plot variable {l}')
+#         plt.legend()
+#         plt.show()
+
+#     # Diagnostic plots
+#     if diagnostic:
+#         if n == 1:
+#             samples.plot_trace()
+#             samples.plot_autocorrelation()
+#         else:
+#             num_bins = 20
+#             plt.figure()
+#             for num in range(post.shape[0]):
+#                 bin_edges = np.linspace(np.min(post[num, :]), np.max(post[num, :]), num_bins + 1)
+#                 hist, _ = np.histogram(post[num, :], bins=bin_edges)
+#                 hist = hist / post.shape[1]
+#                 bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+#                 plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
+#                 plt.xlabel('Value')
+#                 plt.ylabel('Probability')
+#                 plt.title('Distribution')
+#                 plt.legend()
+#                 plt.show()
+
+#             autocov = az.autocov(chains[:, 0, :])
+#             ess = az.ess(chains[:, 0, :])
+#             print(f"ESS values = {ess}")
+#             plt.figure()
+#             plt.plot(autocov[0, :])
+#             plt.title('Autocovariance first chain')
+#             plt.xlabel('Lag')
+#             plt.ylabel('Autocovariance')
+#             plt.legend()
+#             plt.show()
+
+#     return estimates
+
+
 def MCMC_cuqi(
     y: Any, 
     x: Any, 
@@ -682,41 +766,62 @@ def MCMC_cuqi(
     adapt: bool = False, 
     scale: float = 0.3
 ) -> np.ndarray:
-    """Perform MCMC sampling using CUQI library."""
+    """
+    Perform MCMC sampling using CUQI library.
+
+    Args:
+        y (Any): Observed data.
+        x (Any): Model inputs.
+        observation (np.ndarray): Observed values.
+        N (int): Number of samples to draw.
+        burn_in (int): Number of initial samples to discard.
+        n (int, optional): Number of chains. Default is 1.
+        diagnostic (bool, optional): Whether to produce diagnostic plots. Default is True.
+        algo (str, optional): Sampling algorithm to use. Options are 'MH', 'NUTS', 'pCN'. Default is 'MH'.
+        adapt (bool, optional): Whether to adapt the sampler. Default is False.
+        scale (float, optional): Scaling factor for the Metropolis-Hastings algorithm. Default is 0.3.
+
+    Returns:
+        np.ndarray: Estimates of the parameters.
+    """
+    
     dim = observation.shape[0]
     x_init = np.random.rand(dim)
-    estimates = np.empty((1, 0))   # Dimension of parameters to estimate
-    chains = np.empty((0, 1, N - burn_in)) 
-    post = np.empty((1, 0))         
+    estimates = np.empty((1, 0))    # Initialize parameter estimates
+    chains = np.empty((0, n, N - burn_in)) 
+    post = np.empty((1, 0))         # Placeholder for posterior samples
+
     posterior = JointDistribution(y, x)(y=observation)
 
-    # Loop through the number of chains
-    for i in range(n):
-        if algo == "NUTS":
-            sampler = NUTS(posterior, x0=x_init)
-        elif algo == "MH":
-            sampler = MH(posterior, scale=scale) if not adapt else MH(posterior)
-        elif algo == "pCN":
-            sampler = pCN(posterior, x0=x_init)
-        else:
-            raise ValueError(f"Unknown algorithm {algo}")
+    # Select the MCMC sampler based on the algorithm
+    samplers = {
+        "NUTS": lambda: NUTS(posterior, x0=x_init),
+        "MH": lambda: MH(posterior, scale=scale) if not adapt else MH(posterior),
+        "pCN": lambda: pCN(posterior, x0=x_init)
+    }
 
-        samples = sampler.sample_adapt(N - burn_in, burn_in) if adapt else sampler.sample(N - burn_in, burn_in)
+    if algo not in samplers:
+        raise ValueError(f"Unknown algorithm {algo}")
 
-        estimates = np.column_stack((estimates, samples.mean()[:, np.newaxis]))
-        chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
-        post = np.concatenate((post, samples.samples), axis=1)
+    sampler = samplers[algo]()
+    
+    # Sample from the posterior distribution
+    samples = sampler.sample_adapt(N - burn_in, burn_in) if adapt else sampler.sample(N - burn_in, burn_in)
 
-        print(f"Mean values = {estimates.mean(axis=1)}")
+    estimates = np.column_stack((estimates, samples.mean()[:, np.newaxis]))
+    chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
+    post = np.concatenate((post, samples.samples), axis=1)
+
+    print(f"Mean values = {estimates.mean(axis=1)}")
 
     # Plot trace plots
     for l in range(chains.shape[1]):
         plt.figure(figsize=(10, 4))
         for i in range(chains.shape[0]):
-            plt.plot(chains[i, l, :])
+            plt.plot(chains[i, l, :], label=f'Chain {i+1}')
         plt.xlabel('Sample')
         plt.ylabel('Value')
-        plt.title(f'Trace Plot variable {l}')
+        plt.title(f'Trace Plot for variable {l}')
         plt.legend()
         plt.show()
 
@@ -736,22 +841,23 @@ def MCMC_cuqi(
                 plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
                 plt.xlabel('Value')
                 plt.ylabel('Probability')
-                plt.title('Distribution')
+                plt.title('Posterior Distribution')
                 plt.legend()
                 plt.show()
 
             autocov = az.autocov(chains[:, 0, :])
             ess = az.ess(chains[:, 0, :])
-            print(f"ESS values = {ess}")
+            print(f"Effective Sample Size (ESS) values = {ess}")
             plt.figure()
             plt.plot(autocov[0, :])
-            plt.title('Autocovariance first chain')
+            plt.title('Autocovariance of the first chain')
             plt.xlabel('Lag')
             plt.ylabel('Autocovariance')
             plt.legend()
             plt.show()
 
     return estimates
+
 
 # Plot Histogram
 def plot_hist(estimates: np.ndarray, real_x: np.ndarray, output1: np.ndarray, output2: np.ndarray) -> None:
