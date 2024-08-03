@@ -1,121 +1,17 @@
-# import numpy as np
-# from numba import jit
 
-# # Basic case
-# def create_basic_functions():
-#     @jit
-#     def modified_highfid(x, delta):
-#         period = 5.54
-#         phase_within_period = np.mod(x + delta / 6, period)
-#         return (6. * phase_within_period / 5 - 2.) ** 2 * np.sin(12. * phase_within_period / 5 - 4.)
-    
-#     @jit
-#     def modified_lowfid(x, delta):
-#         period2 = 5.96
-#         phase_within_period = np.mod(x + 0.2 + delta / 6, period2)
-#         return 0.5 * (6. * phase_within_period / 5 - 2.) ** 2 * np.sin(12. * phase_within_period / 5 - 4.) + 10 * (phase_within_period / 5 - 0.5) + 5.
-
-#     return modified_highfid, modified_lowfid
-
-# # Discontinuous case
-# def create_discontinuous_functions():
-#     @jit
-#     def modified_highfid(x, delta):
-#         return (2*modified_lowfid(x,delta)- 20*x/5.+20)*(x/5.<0.5) + (4+2*modified_lowfid(x,delta)- 20*x/5.+20+delta)*(x/5.>0.5)  
-        
-#     @jit
-#     def modified_lowfid(x, delta):
-#         return (0.5*(6.*x/5.-2.)**2*np.sin(12.*x/5.-4)+10.*(x/5-0.5)-5.)*(x<2.5) + (3+0.5*(6.*x/5.-2)**2*np.sin(12.*x/5.-4)+10*(x/5.-0.5)-5.+delta)*(x>2.5)
-
-#     return modified_highfid, modified_lowfid
-
-# # Oscillatory case
-# def create_oscillatory_functions():
-#     @jit
-#     def modified_highfid(x, delta):
-#         return (x/5-np.sqrt(2))*modified_lowfid(x, delta)**2
-
-#     @jit
-#     def modified_lowfid(x, delta):
-#         return np.sin(delta*x) 
-
-#     return modified_highfid, modified_lowfid
-
-
-
-# def get_parameters(example):
-#     if example == "Basic":
-#         modified_highfid, modified_lowfid = create_basic_functions()
-
-#         # highfid = lambda x,delta: (6.*(x+delta/6)/5-2.)**2 * np.sin(12.*(x+delta/6)/5-4.)
-#         # lowfid = lambda x, delta: 0.5*highfid(x, delta) + 10*((x-delta/6)/5-0.5) + 5.
-        
-
-#         Nhf = 50
-#         Nlf = 100
-#         NepoLF = 2000
-#         NepoHF = 2000
-#         deltas=np.array([0,10,20])
-
-#     elif example == "Discontinuous":
-#         modified_highfid, modified_lowfid = create_discontinuous_functions()
-
-
-                
-#         Nhf = 16
-#         Nlf = 40
-#         NepoLF = 2000
-#         NepoHF = 5200
-#         deltas=np.linspace(0.,15.,5)
-
-#     elif example == "Oscillatory":
-#         modified_highfid, modified_lowfid = create_oscillatory_functions()
-        
-#         lowfid = lambda x: np.sin(8*np.pi*x/5)
-#         highfid = lambda x: (x/5-np.sqrt(2))*lowfid(x)**2
-        
-#         Nhf = 15
-#         Nlf = 64
-#         NepoLF = 1000
-#         NepoHF = 3000
-#         deltas=np.linspace(2/5,8/5,4)*np.pi
-#     else:
-#         raise ValueError(f"Unsupported example type: {example}")
-    
-#     xhf = np.linspace(0,5,Nhf)
-#     xlf = np.linspace(0,5,Nlf)
-#     #x_test = np.linspace(0,5,1000)
-
-#     datahf= np.array(np.meshgrid(xhf,deltas)).T.reshape(-1, 2)
-#     ord_index = np.lexsort((datahf[:, 0], datahf[:, 1]))
-#     datahf = datahf[ord_index]
-#     Yhf = modified_highfid(datahf[:,0],datahf[:,1])
-#     datalf= np.array(np.meshgrid(xlf,deltas)).T.reshape(-1, 2)
-#     ord_index = np.lexsort((datalf[:, 0], datalf[:, 1]))
-#     datalf = datalf[ord_index]
-#     Ylf = modified_lowfid(datalf[:,0],datalf[:,1])
-
-
-#     return {
-#         "modified_highfid": modified_highfid,
-#         "modified_lowfid": modified_lowfid,
-#         # "highfid": highfid,
-#         # "lowfid": lowfid,
-#         "Nhf": Nhf,
-#         "Nlf": Nlf,
-#         "xhf": xhf,
-#         "xlf": xlf,
-#         "Yhf": Yhf,
-#         "Ylf": Ylf,
-#         "NepoLF": NepoLF,
-#         "NepoHF": NepoHF,
-#         "deltas": deltas
-#     }
 
 import numpy as np
+from numba import jit
 import matplotlib.pyplot as plt
 from typing import Any, Dict, Tuple, Callable, List
-from numba import jit
+from itertools import product
+
+
+
+""" 
+Contains the definition of the Benchmark cases and the loop to investigate parameters to solve the inverse Problem
+"""
+
 
 class FidelityFunctionModified:
     def __init__(self, case: str) -> None:
@@ -283,6 +179,7 @@ class FidelityFunctionModified:
         plt.title('Fidelity Functions for Various Deltas')
         plt.show()
 
+
     def plot_detailed_functions(self) -> None:
         """
         Plots the high fidelity and low fidelity functions along with their detailed data points.
@@ -299,14 +196,26 @@ class FidelityFunctionModified:
         datatest = self._create_meshgrid(x_test, deltas)
 
         plt.figure(figsize=(12, 8))
-        plt.plot(datatest[:, 0], self.data["modified_highfid"](datatest[:, 0], datatest[:, 1]), 'r', label='High-Fidelity Sol')
-        plt.plot(datatest[:, 0], self.data["modified_lowfid"](datatest[:, 0], datatest[:, 1]), 'g', label='Low-Fidelity Sol')
+        
+        # Plot each segment of high-fidelity solutions separately
+        for delta in deltas:
+            datatest_segment = self._create_meshgrid(x_test, [delta])
+            plt.plot(datatest_segment[:, 0], 
+                    self.data["modified_highfid"](datatest_segment[:, 0], datatest_segment[:, 1]), 
+                    'r')
+
+        # Plot each segment of low-fidelity solutions separately
+        for delta in deltas:
+            datatest_segment = self._create_meshgrid(x_test, [delta])
+            plt.plot(datatest_segment[:, 0], 
+                    self.data["modified_lowfid"](datatest_segment[:, 0], datatest_segment[:, 1]), 
+                    'g')
+
         plt.xlabel('x')
-        plt.legend()
+        plt.legend(['High-Fidelity Sol', 'Low-Fidelity Sol'])
         plt.grid(True)
         plt.title('Benchmark 1D - Detailed')
         plt.show()
-
 
 def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray, Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -336,7 +245,18 @@ def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray,
     return nearest_x, y_obs
 
 
-
+def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
+    """
+    Calculate the covariance matrix for the likelihood.
+    
+    Parameters:
+    - sigma: Standard deviation for the likelihood.
+    - t_eval: 2D numpy array of evaluation times.
+    
+    Returns:
+    - cov_likelihood: 2D numpy array representing the covariance matrix.
+    """
+    return sigma ** 2 * np.eye(t_eval.shape[0])
 
 def run_simulation(
     datahf: np.ndarray, mean_prior: np.ndarray, cov_prior: np.ndarray, Yhf: np.ndarray, 
@@ -371,30 +291,24 @@ def run_simulation(
     """
     
     # Initialize error and estimate arrays
-    error = np.zeros((len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling)))
-    estimates = np.zeros((len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling)))
+    error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
+    error = np.zeros(error_shape)
+    estimates = np.zeros(error_shape)
     
-    # Iterate over noise levels
-    for i, noise in enumerate(sigma_noise):
-        # Iterate over number of data points
-        for k, n in enumerate(n_data):
-            t_eval = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
-            nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest x values and observations
-            
-            # Iterate over sigma values
-            for t, s in enumerate(sigma):
-                cov_likelihood = s ** 2 * np.eye(t_eval.shape[0])  # Compute the covariance for the likelihood
-                
-                # Iterate over scaling factors
-                for j, r in enumerate(rwmh_scaling):
-                    # Perform parameter estimation and calculate error
-                    estimates[i, k, t, j], error[i, k, t, j] = final_model.param_inverse(
-                        mean_prior, t_eval, cov_prior=cov_prior, rmwh_scaling=r, 
-                        cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-                        x_real=parameters, number_chains=n_chains, N=iterations, 
-                        burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-                        rwmh_adaptive=rwmh_adaptive, algo=algo
-                    )
+    # Iterate over all combinations of parameters using itertools.product
+    for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
+        t_eval = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
+        nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest x values and observations
+        cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
+
+        # Perform parameter estimation and calculate error
+        estimates[i, k, t, j], error[i, k, t, j] = final_model.param_inverse(
+            mean_prior, t_eval, cov_prior=cov_prior, rmwh_scaling=r, 
+            cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
+            x_real=parameters, number_chains=n_chains, N=iterations, 
+            burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
+            rwmh_adaptive=rwmh_adaptive, algo=algo
+        )
     
     # Identify the index of the minimum error
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
@@ -408,70 +322,90 @@ def run_simulation(
 
     return best_estimate, best_error
 
+def run_simulation_cuqi(
+    data: dict,
+    mean_prior: np.ndarray,
+    x_real: np.ndarray,
+    N: int,
+    burn_in: int,
+    cov_prior: np.ndarray,
+    sd_noise: list,
+    adapt: bool,
+    proposal_sd: list,
+    number_chains: int,
+    algo: str,
+    x_data: np.ndarray,
+    n_data: list,
+    final_model,
+    parallel: bool
+) -> tuple:
+    """
+    Run a CUQI simulation to estimate parameters and compute error.
 
+    Args:
+        data (dict): Dictionary containing high-fidelity data (keys: "xhf" and "Yhf").
+        mean_prior (np.ndarray): Prior mean vector.
+        x_real (np.ndarray): Real x values.
+        N (int): Number of samples.
+        burn_in (int): Number of burn-in samples.
+        cov_prior (np.ndarray): Prior covariance matrix.
+        sd_noise (list): List of noise standard deviations to evaluate.
+        adapt (bool): Whether to use adaptation in the algorithm.
+        proposal_sd (list): List of proposal standard deviations to evaluate.
+        number_chains (int): Number of MCMC chains.
+        algo (str): Algorithm to use for MCMC.
+        x_data (np.ndarray): Initial evaluation times.
+        n_data (list): List of data sizes to evaluate.
+        final_model: Final model object with inverse_cuqi method.
+        parallel (bool): Whether to run MCMC chains in parallel.
 
+    Returns:
+        tuple: Best estimate and best error found during the simulation.
+    """
 
-
-def run_simulation_cuqi(data,
-    mean_prior,
-    x_real,
-    N,
-    burn_in,
-    cov_prior,
-    sd_noise,  
-    adapt,
-    proposal_sd,
-    number_chains,
-    algo,
-    x_data,
-    n_data,
-    final_model
-) :
-
-    
-    # Initialize error and estimate arrays
-    #error = np.zeros((len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling)))
+    # Initialize estimates and error arrays
     estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    
+    error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
+
     # Iterate over noise levels
     for i, noise in enumerate(sd_noise):
         # Iterate over number of data points
         for k, n in enumerate(n_data):
-            x_data = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
-            nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"]) 
+            # Generate evaluation times
+            x_data = np.linspace(0., 5., n).reshape(-1, 1)
+            nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"])
             
-            # Iterate over sigma values
+            # Iterate over proposal standard deviations
             for t, s in enumerate(proposal_sd):
-                cov_likelihood = s ** 2 * np.eye(x_data.shape[0])  # Compute the covariance for the likelihood
-                            
+
                 # Perform parameter estimation and calculate error
-                estimates[i, k, t] = final_model.inverse_cuqi(
-                                mean_prior=mean_prior,
-                                x_real=x_real,
-                                y_obs=y_obs,
-                                N=N,
-                                burn_in=burn_in,
-                                cov_prior=cov_prior,
-                                sd_noise=noise,  
-                                adapt=adapt,
-                                scale=s,
-                                proposal_sd=s,
-                                number_chains=number_chains,
-                                algo=algo,
-                                x_data=x_data
-                            )
-    # Identify the index of the minimum error
-    # smallest_index = np.unravel_index(np.argmin(error), error.shape)
-    # best_estimate = estimates[smallest_index]
-    # best_error = error[smallest_index]
+                estimates[i, k, t], error[i, k, t] = final_model.inverse_cuqi(
+                    mean_prior=mean_prior,
+                    x_real=x_real,
+                    y_obs=y_obs,
+                    N=N,
+                    burn_in=burn_in,
+                    cov_prior=cov_prior,
+                    sd_noise=noise,  
+                    adapt=adapt,
+                    scale=s,
+                    proposal_sd=s,
+                    number_chains=number_chains,
+                    algo=algo,
+                    x_data=x_data,
+                    parallel=parallel
+                )
+                
+    # Find the smallest error and corresponding indices
+    smallest_index = np.unravel_index(np.argmin(error), error.shape)
+    best_estimate = estimates[smallest_index]
+    best_error = error[smallest_index]
     
-    # # Print the best parameters
-    # print(f"The best estimate is given by: sigma_noise={sigma_noise[smallest_index[0]]}, "
-    #       f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
-    #       f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
+    # Print the best parameters
+    print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
+          f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
 
-    return estimates # best_estimate, #best_error
-
+    return best_estimate, best_error
 
 
 

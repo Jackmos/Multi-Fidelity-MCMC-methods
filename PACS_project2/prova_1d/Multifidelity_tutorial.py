@@ -12,18 +12,16 @@ Tutorial for the creation of multifidelity Neural Networks
 # load_context_functions(current_file_path.parent.name)
 
 
-
-# # fixing the seeds for reproducibility purposes
-# seed = 10
-# tf.random.set_seed(seed)
-# np.random.seed(seed)
-# keras.utils.set_random_seed(seed)
-
-
 import numpy as np
+import keras
+import tensorflow as tf
 import inspect
 from matplotlib import pyplot as plt
 from typing import Dict, Any
+import sys
+sys.path.append('../utils')
+from Structure3 import *
+
 
 class FidelityFunctions:
     def __init__(self, case: str, **kwargs: Any) -> None:
@@ -160,6 +158,7 @@ class FidelityFunctions:
         plt.title('Benchmark 1D')
         plt.show()
 
+
     def evaluate_case_data(self) -> None:
         """
         Evaluates and stores the necessary data for the selected case.
@@ -185,13 +184,20 @@ class FidelityFunctions:
         Ylf = self.data["Ylf"]
 
         return {
-            "xhf dimensions": self.data["xhf"].shape[0],
-            "xlf dimensions": self.data["xlf"].shape[0],
+            "xhf dimensions": self.data["Nhf"],
+            "xhf":self.data["xhf"],
+            "xlf dimensions": self.data["Nlf"],
+            "xlf":self.data["xlf"],
             "x_test dimensions": self.data["x_test"].shape[0],
+            "x_test":self.data["x_test"],
             "Yhf dimensions": Yhf.shape[0],
             "Ylf dimensions": Ylf.shape[0],
+            "Yhf":Yhf,
+            "Ylf":Ylf,
             "NepoLF": self.data["NepoLF"],
             "NepoHF": self.data["NepoHF"],
+            "highfid" : self.data["high_fid"],
+            "lowfid" : self.data["low_fid"],
             "high_fid_function": self.function_to_string(high_fid),
             "low_fid_function": self.function_to_string(low_fid)
         }
@@ -199,9 +205,15 @@ class FidelityFunctions:
 
 
 def main():
-    # Case to consider:
+    # Fixing the seeds for reproducibility purposes
+    seed = 10
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+    keras.utils.set_random_seed(seed)
+
+    # Case to consider
     example = "Discontinuous"
-    fidelity_func = FidelityFunctions(example) #fidelity_func = FidelityFunctions(example, Nlf=40, NepoLF=6000)
+    fidelity_func = FidelityFunctions(example)  # Optional params: Nlf=40, NepoLF=6000
 
     data = fidelity_func.get_data()
 
@@ -212,61 +224,65 @@ def main():
     # Plot the functions
     fidelity_func.plot_functions()
 
-
     ### LOW FIDELITY NEURAL NETWORK ###
-    bestLF_params = {'lr' : 0.0255, 'kernel_init' : 'glorot_uniform', 'opt' : 'Adam'}
-    modelLF=NetworkFactory.build_network('LF',params=bestLF_params,data_train=data["xlf"],output_train=data["Ylf"],N=data["NepoLF"],n=data["Nlf"],train=True,do_HPO=False,verbose=False)
-    yLF=modelLF.prediction(data["x_test"])
-    (mse_LF,R_LF)=modelLF.performance(data["x_test"],data.highfid(data["x_test"]))
-
+    bestLF_params = {'lr': 0.0255, 'kernel_init': 'glorot_uniform', 'opt': 'Adam'}
+    modelLF = NetworkFactory.build_network(
+        'LF', params=bestLF_params, data_train=data["xlf"], output_train=data["Ylf"],
+        N=data["NepoLF"], n=data["xlf dimensions"], train=True, do_HPO=False, verbose=False
+    )
+    yLF = modelLF.prediction(data["x_test"])
+    mse_LF, R_LF = modelLF.performance(data["x_test"], data["highfid"](data["x_test"]))
 
     ### HIGH FIDELITY NEURAL NETWORK ###
-    bestHF_params = {'lr' : 0.0255, 'kernel_init' : 'glorot_uniform', 'opt' : 'Adam'}
-    modelHF=NetworkFactory.build_network('LF',params=bestHF_params,data_train=data["xhf"],output_train=data["Yhf"],N=data["NepoHF"],n=data["Nhf"],train=True,do_HPO=False,verbose=False)
-    yHF=modelHF.prediction(data["x_test"])
-    (mse_HF,R_HF)=modelHF.performance(data["x_test"],data.highfid(data["x_test"]))
+    bestHF_params = {'lr': 0.0255, 'kernel_init': 'glorot_uniform', 'opt': 'Adam'}
+    modelHF = NetworkFactory.build_network(
+        'LF', params=bestHF_params, data_train=data["xhf"], output_train=data["Yhf"],
+        N=data["NepoHF"], n=data["xhf dimensions"], train=True, do_HPO=False, verbose=False
+    )
+    yHF = modelHF.prediction(data["x_test"])
+    mse_HF, R_HF = modelHF.performance(data["x_test"], data["highfid"](data["x_test"]))
 
+    ### 2-STEPS NEURAL NETWORK ###
+    best_params = {'kernel_init': 'uniform', 'l2weight': 0.0001, 'lr': 0.0709, 'nodes': 74, 'opt': 'Adamax'}
+    N = [data["NepoLF"], data["NepoHF"]]
+    n = [data["xlf dimensions"], data["xhf dimensions"]]
+    names = ['LF', 'HF']
+    params = [bestLF_params, best_params]
 
-    ### 2 steps NEURAL NETWORK ###
-    bestLF_params = {'lr' : 0.0255, 'kernel_init' : 'glorot_uniform', 'opt' : 'Adam'}
-    best_params = {'kernel_init': 'uniform', 'l2weight': 0.00010018625799978436, 'lr': 0.07093837044166487, 'nodes': 74.0, 'opt': 'Adamax'}
-    N=[data["NepoLF"],data["NepoHF"]]
-    n=[data["Nlf"],data["Nhf"]]
-    names=['LF','HF']
-
-    params=[bestLF_params,best_params]
-    final_model=NetworkFactory.build_network("2step",names,params=params,data_train=[data["xlf"],data["xhf"]],output_train=[data["Ylf"],data["Yhf"]],N=N,n=n,do_HPO=False,verbose=False)
-    y_test=final_model.prediction(data["x_test"])
+    final_model = NetworkFactory.build_network(
+        "2step", names, params=params, data_train=[data["xlf"], data["xhf"]],
+        output_train=[data["Ylf"], data["Yhf"]], N=N, n=n, do_HPO=False, verbose=False
+    )
+    y_test = final_model.prediction(data["x_test"])
 
     input_HF = np.concatenate(
-                        (data["x_test"].reshape(-1,1),  final_model.model_list[0].prediction(data["x_test"]).reshape(-1,1)),axis=1
-                    ) 
-    (mse_MF,R_MF)=final_model.model_list[1].performance(input_HF,data.highfid(data["x_test"]))
+        (data["x_test"].reshape(-1, 1), final_model.model_list[0].prediction(data["x_test"]).reshape(-1, 1)), axis=1
+    )
+    mse_MF, R_MF = final_model.model_list[1].performance(input_HF, data["highfid"](data["x_test"]))
 
-    ### PLOT of predicted models ###
-    #LF single-fidelity
-    plt.figure()
-    plt.plot(data["xlf"],data["Ylf"],'go', label = 'LF training data', markersize = 4)
-    plt.plot(data["x_test"],data.lowfid(data["x_test"]),'g', label = 'exact LF') 
-    plt.plot(data["x_test"],yLF,'k--', label = 'pred LF')
-    plt.legend()
-    plt.title('Low fidelity model')
+    ### PLOT OF PREDICTED MODELS ###
+    def plot_model(data, y_pred, fidelity, title, label_suffix):
+        plt.figure()
+        if fidelity == 'LF':
+            plt.plot(data["xlf"], data["Ylf"], 'go', label=f'LF training data', markersize=4)
+            plt.plot(data["x_test"], data["lowfid"](data["x_test"]), 'g', label='exact LF')
+        else:
+            plt.plot(data["xhf"], data["Yhf"], 'ro', label=f'HF training data')
+            plt.plot(data["x_test"], data["highfid"](data["x_test"]), '-r', label='exact HF')
+        
+        plt.plot(data["x_test"], y_pred, '--k', label=f'pred {fidelity} {label_suffix}')
+        plt.legend()
+        plt.title(title)
+        plt.show()
 
-    #HF single-fidelity
-    plt.figure()
-    plt.plot(data["xhf"],data["Yhf"],'ro', label = 'HF training data')
-    plt.plot(data["x_test"],data.highfid(data["x_test"]),'-r', label = 'exact HF')
-    plt.plot(data["x_test"],yHF,'--k', label = 'pred HF')
-    plt.legend()
-    plt.title('High fidelity model - single-fidelity')
+    # Plot LF single-fidelity
+    plot_model(data, yLF, 'LF', 'Low fidelity model', '')
 
-    #2-step MF
-    plt.figure()
-    plt.plot(data["xhf"],data["Yhf"],'ro', label = 'HF training data')
-    plt.plot(data["x_test"],data.highfid(data["x_test"]),'-r', label = 'exact HF')
-    plt.plot(data["x_test"],y_test,'--k', label = 'pred HF')
-    plt.legend()
-    plt.title('High fidelity model - 2-step')
+    # Plot HF single-fidelity
+    plot_model(data, yHF, 'HF', 'High fidelity model - single-fidelity', '')
+
+    # Plot 2-step MF
+    plot_model(data, y_test, 'HF', 'High fidelity model - 2-step', '- 2-step')
 
 
 if __name__ == "__main__":
