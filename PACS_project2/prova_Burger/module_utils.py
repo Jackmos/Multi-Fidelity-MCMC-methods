@@ -28,17 +28,69 @@ import arviz as az
 import time 
 
 
+
+# def compute_randomized_SVD(S: np.ndarray, N_POD: int, N_h: int, n_channels: int) -> tuple[np.ndarray, np.ndarray]:
+#     """
+#     Compute the randomized Singular Value Decomposition (SVD) for the input matrix S.
+
+#     Parameters:
+#     - S (np.ndarray): The input matrix of shape (n_channels * N_h, m), where m is the number of columns.
+#     - N_POD (int): The number of principal components to compute.
+#     - N_h (int): The number of spatial grid points.
+#     - n_channels (int): The number of channels.
+
+#     Returns:
+#     - tuple[np.ndarray, np.ndarray]: A tuple containing the left singular vectors (U) and the singular values (Sigma).
+#       - U (np.ndarray): The matrix of left singular vectors of shape (n_channels * N_h, N_POD).
+#       - Sigma (np.ndarray): The array of singular values.
+#     """
+#     U = np.zeros((n_channels * N_h, N_POD))
+#     Sigma = np.zeros((n_channels, N_POD))  # Initializing Sigma to store singular values for each channel
+
+#     for i in range(n_channels):
+#         start_idx = i * N_h
+#         end_idx = (i + 1) * N_h
+#         U[start_idx:end_idx], sigma, _ = extmath.randomized_svd(
+#             S[start_idx:end_idx, :],
+#             n_components=N_POD,
+#             transpose=False,
+#             flip_sign=False,
+#             random_state=123
+#         )
+#         Sigma[i, :] = sigma
+
+#     return U, Sigma
     
 def custom_activation(x):
     return x + K.square(K.sin(x))
 
-def  normalization(x, xmax,xmin):
-    return (x - xmin) / (
-    xmax - xmin
-)
+def normalization(x: float, xmax: float, xmin: float) -> float:
+    """
+    Normalize a value x to the range [0, 1] based on the given minimum and maximum values.
 
-def  denormalization(x, xmax,xmin ):
-    return x*(xmax-xmin) +xmin
+    Parameters:
+    - x (float): The value to be normalized.
+    - xmax (float): The maximum value of the original range.
+    - xmin (float): The minimum value of the original range.
+
+    Returns:
+    - float: The normalized value in the range [0, 1].
+    """
+    return (x - xmin) / (xmax - xmin)
+
+def denormalization(x: float, xmax: float, xmin: float) -> float:
+    """
+    Denormalize a value x from the range [0, 1] back to the original range [xmin, xmax].
+
+    Parameters:
+    - x (float): The normalized value in the range [0, 1].
+    - xmax (float): The maximum value of the original range.
+    - xmin (float): The minimum value of the original range.
+
+    Returns:
+    - float: The denormalized value in the original range [xmin, xmax].
+    """
+    return x * (xmax - xmin) + xmin
 
 def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
     #print("check 1")

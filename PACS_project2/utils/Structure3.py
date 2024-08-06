@@ -286,7 +286,7 @@ class NetworkFactory:
         if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN, NetworkType.HFPER}:
             return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose)
         
-        elif network_type_enum == NetworkType.step:
+        elif  network_type_enum ==  NetworkType["STEP"]: #network_type_enum == NetworkType.step:
             # Ensure data_train and output_train are lists for MultiFidelity networks.
             if not (isinstance(data_train, list) and isinstance(output_train, list)):
                 raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
@@ -296,9 +296,10 @@ class NetworkFactory:
             return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose)
         
         elif network_type_enum == NetworkType.LSTM:
-            return LSTM(params, data_train, output_train, N, train, do_HPO, verbose)
+            return LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose)
 
         raise ValueError(f"Invalid network type: {network_type}")
+
 
 # Abstract base class for network-related operations.
 class INetwork(ABC):
@@ -347,7 +348,7 @@ class INetwork(ABC):
 
         # Handle inputs and prepare final data for prediction.
         if self.inputs is not None:
-            x_final = np.tile(x_final, (self.inputs.shape[0], 1))
+            x_final = np.tile(x_final, (self.inputs.shape[0], 1))          # [0]?
         else:
             warning_message = "Inputs are not set."
             warnings.warn(warning_message, UserWarning)
@@ -500,7 +501,7 @@ class INetwork(ABC):
 
         # Check if observations are provided
         if y_obs is not None:
-            dim = y_obs.shape[0]
+            dim = y_obs.shape[1]
         else:
             warning_message = "No observation nor data given"
             warnings.warn(warning_message, UserWarning)
@@ -526,7 +527,9 @@ class INetwork(ABC):
             A = CuqiModel(forward=self.wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(dim))
             x = Gaussian(mean=mean_prior, cov=cov_prior)
         else:
-            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(m))
+            # A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(m))
+            # x = Gaussian(mean=mean_prior, cov=cov_prior)
+            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Discrete(dim), domain_geometry=Discrete(m))
             x = Gaussian(mean=mean_prior, cov=cov_prior)
 
         y = Gaussian(mean=A(x), cov=proposal_sd)
@@ -815,7 +818,7 @@ class Neural_Network(INetwork):
     @classmethod
     def load(cls, path: str, identifier: str) -> ' Neural_Network':
         """
-        Load the LSTM model and the class instance.
+        Load the NN model and the class instance.
 
         Args:
             path (str): Directory path from which to load the model and instance.
@@ -939,7 +942,12 @@ class MultiFidelity(INetwork):
         data = copy.copy(data_test)
 
         for i in range(position - 1):
-            data = np.c_[data, self.model_list[i].prediction(data).reshape(-1, 1)]
+            pred=self.model_list[i].prediction(data)
+            if len(pred.shape)<=1:
+                data = np.c_[data, pred.reshape(-1, 1)]
+            else:
+                data = np.c_[data, pred]
+
 
         pred = self.model_list[position - 1].prediction(data)
 
@@ -1106,7 +1114,7 @@ class LSTM_network(INetwork):
         """
         self.sequence_length = seq_length
         self.sequence_freq = seq_freq
-        self.input_train_seq, self.output_train_seq = _sliding_windows(data_train, output_train, self.sequence_length, self.sequence_freq)
+        self.input_train_seq, self.output_train_seq = self._sliding_windows(self.data_train, self.output_train, self.sequence_length, self.sequence_freq)
 
         callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self.params['patience'], restore_best_weights=True)
         tf.keras.utils.set_random_seed(29)
@@ -1255,6 +1263,66 @@ class LSTM_network(INetwork):
 
         return np.array(x), np.array(y)
 
+    def param_inverse(self, mean_prior: np.ndarray, x_data: np.ndarray, x_data2: np.ndarray, cov_prior: Optional[np.ndarray] = None, 
+                      cov_noise: float = 0.1, cov_likelihood: Optional[np.ndarray] = None, y_obs: Optional[np.ndarray] = None, 
+                      x_real: Optional[np.ndarray] = None, number_chains: int = 1, N: int = 1000, burn_in: int = 500, 
+                      levels: int = 1, diagnostic: bool = True, rwmh_cov: Optional[np.ndarray] = None, rmwh_scaling: float = 0.1, 
+                      rwmh_adaptive: bool = True, algo: str = "MH", transformation: List[Any] = [], _forward_low_fidelity: Optional[Callable] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Perform parameter inversion using MCMC sampling, potentially utilizing a low fidelity forward model.
+
+        Parameters:
+        - mean_prior: Mean of the prior distribution.
+        - x_data: Input data.
+        - cov_prior: Covariance of the prior distribution (optional).
+        - cov_noise: Noise covariance.
+        - cov_likelihood: Covariance of the likelihood (optional).
+        - y_obs: Observed data (optional).
+        - x_real: Real parameters (optional).
+        - number_chains: Number of MCMC chains.
+        - N: Number of MCMC iterations.
+        - burn_in: Number of burn-in iterations.
+        - levels: Number of model levels.
+        - diagnostic: Flag to enable diagnostic plots.
+        - rwmh_cov: Covariance matrix for RWMH proposal (optional).
+        - rmwh_scaling: Scaling factor for RWMH.
+        - rwmh_adaptive: Flag for adaptive RWMH.
+        - algo: MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
+        - transformation: List of transformations to apply.
+        - _forward_low_fidelity: Low fidelity forward model function (optional).
+
+        Returns:
+        - estimates: MCMC estimates of the parameters.
+        - error: Relative error of the estimates.
+        """
+
+        # Check if _forward_low_fidelity is provided and is a callable function
+        if _forward_low_fidelity is None or not callable(_forward_low_fidelity):
+            raise KeyError("Provide _forward_low_fidelity, which must be a callable function")
+        
+        self.input2=x_data2
+        # Store the _forward_low_fidelity function for later use
+        self._forward_low_fidelity = _forward_low_fidelity
+        # Call the parent class's param_inverse method with the provided parameters
+        return super().param_inverse(
+            mean_prior=mean_prior, 
+            x_data=x_data, 
+            cov_prior=cov_prior, 
+            cov_noise=cov_noise, 
+            cov_likelihood=cov_likelihood, 
+            y_obs=y_obs, 
+            x_real=x_real, 
+            number_chains=number_chains, 
+            N=N, 
+            burn_in=burn_in, 
+            levels=levels, 
+            diagnostic=diagnostic, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=rmwh_scaling, 
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            transformation=transformation
+        )
 
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
@@ -1272,10 +1340,42 @@ class LSTM_network(INetwork):
         x_final = super()._input_wrapper_prediction(x_test, multi_input)
 
         # Apply forward low-fidelity modeling to the wrapped input
-        prediction_input = forward_low_fidelity(x_final)
+        prediction_input = self._forward_low_fidelity(x_final)
 
-        return prediction_input
+        return self.prediction(prediction_input).flatten()
+    
+    def HPO(self, data_train: np.ndarray, output_train: np.ndarray) -> Dict[str, Any]:
+        """
+        Performs hyperparameter optimization using Bayesian optimization.
 
+        Args:
+            data_train (np.ndarray): Training data.
+            output_train (np.ndarray): Training outputs.
+
+        Returns:
+            Dict[str, Any]: The best hyperparameters found.
+        """
+        def objective(trial):
+            K.clear_session()
+            params = {
+                "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
+                "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+                "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+                "sequence_length": trial.suggest_int("sequence_length", 10, 100),
+                "sequence_freq": trial.suggest_int("sequence_freq", 1, 10),
+                "patience": trial.suggest_int("patience", 3, 10),
+            }
+            loss = kCrossVal_parallel(N=self.n, Nepo=self.N, x=data_train, y=output_train, 
+                                      params=params, name=self.name, input_shape=self.input_shape, 
+                                      output_shape=self.output_shape, p=5, n_jobs=-1)
+            return loss
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=20, n_jobs=-1)
+        best_params = study.best_params
+        return best_params
 
 class Intermediate(INetwork):
     def __init__(self, 

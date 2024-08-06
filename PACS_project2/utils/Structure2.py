@@ -1881,9 +1881,10 @@ class MultiFidelity(INetwork):
     #     if diagnostic:
     #         self.plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
         
-    #     return estimates         
+    #     return estimates  
+    @compute_time       
     def inverse_cuqi(self, mean_prior, x_data,x_real=None, y_obs=None, N=1000, burn_in=500, cov_prior=0.5, sd_noise=0.1,
-                     adapt=False, scale=0.3, proposal_sd=0.3, x_init=None, diagnostic=True, number_chains=1, algo="MH",transformation= []):
+                     adapt=False, scale=0.3, proposal_sd=0.3, x_init=None, diagnostic=True, number_chains=1, algo="MH",transformation= [],parallel=False):
         self.inputs=x_data
         self.transformations = transformation
 
@@ -1920,7 +1921,7 @@ class MultiFidelity(INetwork):
         else:
             y_obs = y_obs + np.random.normal(loc=0., scale=sd_noise, size=y_obs.shape)
 
-        estimates = MCMC_cuqi(y, x, y_obs, N, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale)
+        estimates = MCMC_cuqi(y, x, y_obs, N, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
         estimates = np.mean(estimates, axis=1)
         if diagnostic:
             plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
