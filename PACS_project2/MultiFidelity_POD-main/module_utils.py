@@ -290,20 +290,20 @@ class Attention(Layer):
         return context_vector
 
 def getModel(params,num_inputs,name,num_outputs):
-    if(name == "LSTM"):
-        inputs = Input(shape=(None, num_inputs))
+    # if(name == "LSTM"):
+    #     inputs = Input(shape=(None, num_inputs))
 
-        a = LSTM(params['nodes'], return_sequences = True)(inputs) 
-        for i in range(params['lay']-1):
-            a = Dropout(params['dropout'])(a)
-            a = LSTM(params['nodes'], return_sequences = True)(a)
-        for i in range(params['lay_dense']):
-            a  = Dense(params['nodes_dense'])(a)
+    #     a = LSTM(params['nodes'], return_sequences = True)(inputs) 
+    #     for i in range(params['lay']-1):
+    #         a = Dropout(params['dropout'])(a)
+    #         a = LSTM(params['nodes'], return_sequences = True)(a)
+    #     for i in range(params['lay_dense']):
+    #         a  = Dense(params['nodes_dense'])(a)
         
-        output = Dense(num_outputs,activation='linear')(a)
+    #     output = Dense(num_outputs,activation='linear')(a)
 
 
-    elif (name == "LSTM2"):
+    if (name == "LSTM"):
         inputs = Input(shape=(None, num_inputs))
         if params["sched"] is True:
             params['lr'] = tf.keras.optimizers.schedules.ExponentialDecay(
