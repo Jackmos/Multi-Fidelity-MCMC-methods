@@ -1,1136 +1,1072 @@
-from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
-from hyperopt.pyll.stochastic import sample
-from hyperopt.pyll.base import scope
-from sklearn.model_selection import KFold
-from keras.models import save_model
-import numpy as np
-from matplotlib import pyplot as plt
-from time import perf_counter
-from keras.models import Model
-from keras.layers import Dense, Input, Dropout
-from keras.layers import Layer
-from tensorflow.keras.layers import (
-    concatenate,
-)  
-from keras.models import load_model, model_from_json
-from keras.losses import MeanSquaredError
-
-from sklearn.utils import extmath
-from tensorflow.keras.models import model_from_json
-import pickle
-from keras.regularizers import l2, l1
-from sklearn.model_selection import KFold
-from keras.optimizers import Adam, Nadam, Adamax, RMSprop
-import keras.backend as K
-import tensorflow as tf
-import keras as kr
-import h5py
 import sys
 import os
-import warnings
+import numpy as np
+from numpy import newaxis as _
 import copy
+import pickle
+import time
+from typing import Callable, Tuple, Any, List, Optional, Union, Dict
+from contextlib import contextmanager
+from module_utils import *
+from abc import ABC, abstractmethod
+from functools import wraps
+from enum import Enum
+from sklearn.model_selection import KFold
+from joblib import Parallel, delayed
+import concurrent.futures
+from keras.optimizers import Adam, Nadam, Adamax, RMSprop
+from scipy.stats import multivariate_normal
+from Helpers import *
+from BIP_functions import *
 from cuqi.distribution import Uniform, Gaussian,JointDistribution
 from cuqi.sampler import MH
 from cuqi.model import Model as CuqiModel
 from cuqi.geometry import Continuous1D, Discrete
-import time
+import re
 import tinyDA as tda
-from scipy.stats import multivariate_normal, beta   
-import arviz as az
+import optuna
 
-from abc import ABCMeta, abstractstaticmethod, abstractmethod
-from functools import reduce
+############################
+import logging
 
-import importlib
-from pathlib import Path
-import sys
+# Suppress TensorFlow warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.get_logger().setLevel(logging.ERROR)
 
-# connect to specific definition
-def load_context_functions(context_folder):
-    try:
-        sys.path.append('context_folder')
-        return True
-    except ImportError:
-        print(f"folder path {context_folder} not found")
-        return False
-from module_utils import *
+# Set the environment variable to disable oneDNN custom operations
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+# Ensure compatibility mode for deprecated functions
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+########################################
 
 
-class Function:
-    def __init__(self, func):
+# Define the types of networks as an enumeration for type safety and clarity.
+class NetworkType(Enum):
+    LF = "LF"
+    MF = "MF"
+    HF = "HF"
+    HFLIN = "Hflin"
+    HFPER = "Hfper"
+    INTER = "Inter"
+    LSTM = "LSTM"
+    STEP = "step"
+
+# Factory class to build different types of networks based on the provided type.
+class NetworkFactory:
+
+    @staticmethod
+    def build_network(network_type: str,
+                      names: List[str] = [],
+                      params: Optional[dict] = None,
+                      data_train: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
+                      output_train: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
+                      N: int = 1000,
+                      n: int = 10,
+                      train: bool = True,
+                      do_HPO: bool = False,
+                      verbose: bool = False) -> 'INetwork':
         """
-        Initialize the class with a given function.
+        Build and return a network of the specified type.
 
         Parameters:
-        - func: The function for which we want to compute the Jacobian.
-        """
-        self.func = func
-
-    def compute_jacobian(self, x):
-        """
-        Compute the Jacobian matrix for the given point x.
-
-        Parameters:
-        - x: The point at which to compute the Jacobian.
+        - network_type (str): Type of the network to be built.
+        - names (List[str]): List of names used for MultiFidelity networks.
+        - params (Optional[dict]): Dictionary of parameters for the network.
+        - data_train (Optional[Union[np.ndarray, List[np.ndarray]]]): Training data.
+        - output_train (Optional[Union[np.ndarray, List[np.ndarray]]]): Training output data.
+        - N (int): Number of samples.
+        - n (int): Some integer parameter.
+        - train (bool): Flag indicating whether to train the network.
+        - do_HPO (bool): Flag indicating whether to perform hyperparameter optimization.
+        - verbose (bool): Flag indicating whether to print verbose output.
 
         Returns:
-        - The Jacobian matrix.
+        - INetwork: The created network object.
+
+        Raises:
+        - ValueError: If an invalid network type is provided.
         """
-        x = np.atleast_1d(x).astype(float)
-        n = len(x)
-        m = len(self.func(x))
 
-        jacobian = np.zeros((m, n))
+        try:
+            # Use Enum for safer and clearer type checking.
+            network_type_enum = NetworkType[network_type.upper()]
+        except KeyError:
+            # Check if it's an n-step network type using regex
+            match = re.match(r'(\d+)STEP', network_type, re.IGNORECASE)
+            if match:
+                n_step = int(match.group(1))
+                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose)
+            else:
+                raise ValueError(f"Invalid network type: {network_type}")
+            
+        # Map the enum to the respective network class constructors.
+        if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN, NetworkType.HFPER}:
+            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose)
+        
+        elif  network_type_enum ==  NetworkType["STEP"]: #network_type_enum == NetworkType.step:
+            # Ensure data_train and output_train are lists for MultiFidelity networks.
+            if not (isinstance(data_train, list) and isinstance(output_train, list)):
+                raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
+            
+            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose)
+        
+        elif network_type_enum == NetworkType.INTER:
+            return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose)
+        
+        elif network_type_enum == NetworkType.LSTM:
+            return LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose)
 
-        h = 1e-8
-        for i in range(n):
-            x_copy = x.copy()
-
-            # Perturb the i-th element positively
-            x_copy[i] += h
-            func_pos = self.func(x_copy)
-
-            # Perturb the i-th element negatively
-            x_copy[i] -= 2 * h
-            func_neg = self.func(x_copy)
-
-            # Compute partial derivative using central difference
-            jacobian[:, i] = (func_pos - func_neg) / (2 * h)
-
-        return jacobian
-    
-def compute_time(function):
-    def wrapper(*args, **kwargs):
-        init = time.time()
-        res = function(*args, **kwargs)
-        end = time.time()
-        timespam = end - init
-        print(f"The function {function.__name__} took {timespam} seconds.")
-        return res
-    return wrapper
-
-
-class Suppressor:
-    # suppress the printed message
-    def __enter__(self):
-        self._stdout = sys.stdout
-        sys.stdout = open(os.devnull, 'w')
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        sys.stdout.close()
-        sys.stdout = self._stdout
+        raise ValueError(f"Invalid network type: {network_type}")
 
 
-class INetwork(metaclass=ABCMeta):
-    
-    @abstractstaticmethod
-    def prediction(self):
-        return
-    
-    @abstractstaticmethod
-    def performance(self):
-        return
+# Abstract base class for network-related operations.
+class INetwork(ABC):
+    """
+    Abstract base class for defining a network interface with essential methods.
+    This class uses the Abstract Base Class (ABC) mechanism to enforce the implementation
+    of specific methods in any subclass.
+    """
 
-    # @abstractmethod
-    # def inverse(self):
-    #     return
-    
+    def __init__(self):
+        self.inputs = None
+        self.transformations = []
+
+    def variable_input(self, input_discr: Any) -> None:
+        """
+        Sets the input variable when solving the inverse problem.
+        
+        Args:
+            input_discr (Any): The input discriminator.
+        """
+        self.inputs = input_discr
+
+    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
+        """
+        Prepare input data for prediction.
+
+        Parameters:
+        - x_test (np.ndarray): Test data for prediction.
+        - multi_input (bool): Flag indicating if there are multiple inputs.
+
+        Returns:
+        - np.ndarray: Prepared data for prediction or an empty array if inputs are not set.
+        """
+        # Ensure x_test is 2D.
+        if x_test.ndim == 1:
+            x_test = x_test.reshape(-1, 1)
+
+        # Transpose x_test for consistent shape.
+        x_test = x_test.T
+
+        # Apply transformations if any.
+        if self.transformations:
+            x_final = reduce(lambda acc, transf: np.hstack([acc, transf(acc)]), self.transformations, x_test)
+        else:
+            x_final = x_test
+
+        # Handle inputs and prepare final data for prediction.
+        if self.inputs is not None:
+            x_final = np.tile(x_final, (self.inputs.shape[0], 1))          # [0]?
+        else:
+            warning_message = "Inputs are not set."
+            warnings.warn(warning_message, UserWarning)
+            return np.array([])
+
+        return x_final
+
+     
+
+    def wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
+        """
+        Wrapper for making predictions with processed test inputs.
+        
+        Args:
+            x_test (np.ndarray): Test input data.
+            multi_input (bool): Flag to indicate if multiple inputs are used.
+        
+        Returns:
+            np.ndarray: Predicted output data.
+        """
+        # Process the test inputs using the internal wrapper
+        x_final = self._input_wrapper_prediction(x_test, multi_input)
+        
+        # Determine the number of dimensions
+        if x_final.ndim == 2:
+            # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
+            concatenated_input = np.concatenate((self.inputs, x_final), axis=1)
+        elif x_final.ndim == 3:
+            # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
+            inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
+            concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
+        else:
+            raise ValueError("Unsupported number of dimensions for x_final")
+        
+        # Perform the prediction and flatten the result
+        return self.prediction(concatenated_input).flatten()
+
+
+
+    @compute_time
+    def param_inverse(self, mean_prior: np.ndarray, 
+                      x_data: np.ndarray, 
+                      max_par:float, 
+                      cov_prior: Optional[np.ndarray] = None, 
+                      cov_noise: float = 0.1, 
+                      cov_likelihood: Optional[np.ndarray] = None,
+                      y_obs: Optional[np.ndarray] = None, 
+                      x_real: Optional[np.ndarray] = None, 
+                      number_chains: int = 1, 
+                      N: int = 1000, 
+                      burn_in: int = 500, 
+                      levels: int = 1, 
+                      diagnostic: bool = True, 
+                      rwmh_cov: Optional[np.ndarray] = None, 
+                      rmwh_scaling: float = 0.1, 
+                      rwmh_adaptive: bool = True, 
+                      algo: str = "MH", 
+                      transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray]:
+
+        """
+        Perform parameter inversion using MCMC sampling.
+
+        Parameters:
+        - mean_prior: Mean of the prior distribution.
+        - x_data: Input data.
+        - max_par: maximal value of the parameter to be estimated. Used only for graphical purposes
+        - cov_prior: Covariance of the prior distribution (optional).
+        - cov_noise: Noise covariance.
+        - cov_likelihood: Covariance of the likelihood (optional).
+        - y_obs: Observed data (optional).
+        - x_real: Real parameters (optional).
+        - number_chains: Number of MCMC chains.
+        - N: Number of MCMC iterations.
+        - burn_in: Number of burn-in iterations.
+        - levels: Number of model levels.
+        - diagnostic: Flag to enable diagnostic plots.
+        - rwmh_cov: Covariance matrix for RWMH proposal (optional).
+        - rmwh_scaling: Scaling factor for RWMH.
+        - rwmh_adaptive: Flag for adaptive RWMH.
+        - algo: MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
+        - transformation: List of transformations to apply.
+
+        Returns:
+        - estimates: MCMC estimates of the parameters.
+        - error: Relative error of the estimates.
+        """
+        self.transformations = transformation
+        self.inputs = x_data
+
+        if x_real is not None:
+            dim = x_real.shape[0]
+        elif y_obs is not None:
+            dim = y_obs.shape[0]
+        else:
+            warnings.warn("No observation nor data given", UserWarning)
+            return np.array([]), np.array([])
+
+        if N <= burn_in:
+            warnings.warn("Number of steps insufficient, smaller or equal to burn-in", UserWarning)
+
+        if cov_prior is None:
+            cov_prior = mean_prior * 0.2
+
+        if cov_likelihood is None:
+            cov_likelihood = cov_noise**2 * np.eye(x_real.shape[0])
+
+        my_prior = multivariate_normal(mean_prior, cov_prior)
+
+        if y_obs is None:
+            y_obs = self.wrapper_prediction(x_real) + np.random.normal(loc=0., scale=cov_noise, size=x_real.shape)
+        else:
+            y_obs += np.random.normal(loc=0., scale=cov_noise, size=y_obs.shape)
+            y_obs = y_obs.flatten()
+
+        if levels > 1:
+            if levels > len(self.model_list):
+                warnings.warn("Number of levels is exceeding the number of models", UserWarning)
+            else:
+                my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood) for _ in range(levels)]
+                my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i].wrapper_prediction) for i in range(levels)]
+        else:
+            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
+            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+
+        if rwmh_cov is None:
+            rwmh_cov = np.eye(len(x_real))
+
+        estimates = MCMC(my_posterior=my_posterior, N=N, burnin=burn_in, n=number_chains, diagnostic=diagnostic, rwmh_cov=rwmh_cov, rmwh_scaling=rmwh_scaling, rwmh_adaptive=rwmh_adaptive, algo=algo, dim=dim)
+
+        if diagnostic:
+            plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
+        
+        error = np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
+        return estimates, error    
+
+    @compute_time
+    def inverse_cuqi(self,mean_prior: np.ndarray, 
+                    x_data: np.ndarray,
+                    max_par:float,
+                    x_real: Optional[np.ndarray] = None, 
+                    y_obs: Optional[np.ndarray] = None, 
+                    N: int = 1000, 
+                    burn_in: int = 500, 
+                    cov_prior: float = 0.5, 
+                    sd_noise: float = 0.1,
+                    adapt: bool = False, 
+                    scale: float = 0.3, 
+                    proposal_sd: float = 0.3, 
+                    x_init: Optional[Union[int, float, np.ndarray]] = None, 
+                    diagnostic: bool = True, 
+                    number_chains: int = 1, 
+                    algo: str = "MH", 
+                    transformation: List = [], 
+                    parallel: bool=False) -> Union[np.ndarray, float]:
+        """
+        Perform Bayesian inference using the CUQI framework.
+
+        Parameters:
+        - mean_prior: np.ndarray : Prior mean
+        - x_data: np.ndarray : Input data
+        - max_par float: maximal value of the parameter to be estimated. Used only for graphical purposes
+        - x_real: Optional[np.ndarray] : Real data (optional)
+        - y_obs: Optional[np.ndarray] : Observed data (optional)
+        - N: int : Number of iterations (default: 1000)
+        - burn_in: int : Number of burn-in steps (default: 500)
+        - cov_prior: float : Covariance of the prior (default: 0.5)
+        - sd_noise: float : Standard deviation of noise (default: 0.1)
+        - adapt: bool : Whether to adapt the proposal distribution (default: False)
+        - scale: float : Scaling factor for the proposal distribution (default: 0.3)
+        - proposal_sd: float : Standard deviation of the proposal distribution (default: 0.3)
+        - x_init: Optional[Union[int, float, np.ndarray]] : Initial guess (default: None)
+        - diagnostic: bool : Whether to plot diagnostic information (default: True)
+        - number_chains: int : Number of MCMC chains (default: 1)
+        - algo: str : Algorithm to use ("MH" or "NUTS", default: "MH")
+        - transformation: List : List of transformations (default: [])
+        - parallel: bool: True to parallelize computation of Markov Chains
+        
+        Returns:
+        - estimates: np.ndarray : Estimated parameters
+        - error: float : Error with respect to true parameters
+        """
+
+        # Set inputs and transformations
+        self.inputs = x_data
+        self.transformations = transformation
+
+        # Check if observations are provided
+        if y_obs is not None:
+            dim = y_obs.shape[1]
+        else:
+            warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)
+            return
+
+        # Check if the number of steps is greater than burn-in period
+        if N <= burn_in:
+            warning_message = "Number of steps insufficient, smaller or equal than burn-in"
+            warnings.warn(warning_message, UserWarning)
+            return
+
+        # Initialize x_init if not provided
+        if x_init is None:
+            x_init = np.random.rand(dim)
+        elif isinstance(x_init, (int, float)):
+            x_init = x_init * np.ones(dim)
+        
+        m = x_real.shape[0]
+        
+        # Select algorithm and initialize CuqiModel and Gaussian objects
+        if algo == "NUTS":
+            fun = Function(self.wrapper_prediction)
+            A = CuqiModel(forward=self.wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(dim))
+            x = Gaussian(mean=mean_prior, cov=cov_prior)
+        else:
+            # A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(m))
+            # x = Gaussian(mean=mean_prior, cov=cov_prior)
+            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Discrete(dim), domain_geometry=Discrete(m))
+            x = Gaussian(mean=mean_prior, cov=cov_prior)
+
+        y = Gaussian(mean=A(x), cov=proposal_sd)
+
+        # Generate or perturb observations
+        if y_obs is None:
+            y_obs = y(x=x_real).sample()
+        else:
+            y_obs = y_obs + np.random.normal(loc=0., scale=sd_noise, size=y_obs.shape)
+
+        # Run MCMC to get estimates
+        estimates = MCMC_cuqi(y, x, y_obs, N, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
+        estimates = np.mean(estimates, axis=1)
+
+        # Calculate and print error
+        error = np.linalg.norm(estimates - x_real)
+        print(f"Error wrt true parameters: {error}")
+
+        # Plot diagnostics if required
+        if diagnostic:
+            plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
+
+        return estimates, error
+
+
     @abstractmethod
-    def inverse_cuqi(self):
-        return
-    
-    @abstractstaticmethod
-    def save(self):
-        return
-    
-def sliding_windows(data_input, data_output, seq_length, freq=1):
-    x = []
-    y = []
+    def prediction(self) -> None:
+        """
+        Abstract method to be implemented for making predictions using the network.
+        Subclasses must provide the implementation for this method.
+        """
+        pass
 
-    for i in range(data_input.shape[0]):
-        for j in range(0, data_input.shape[1] - seq_length, freq):
-            _x = data_input[i, j:(j + seq_length), :]
-            _y = data_output[i, j:(j + seq_length), :]
-            x.append(_x)
-            y.append(_y)
+    @abstractmethod
+    def performance(self) -> None:
+        """
+        Abstract method to be implemented for evaluating the network's performance.
+        Subclasses must provide the implementation for this method.
+        """
+        pass
 
-    return np.array(x), np.array(y)
+    @abstractmethod
+    def HPO(self) -> None:
+        """
+        Abstract method to be implemented for hyperparameter optimization.
+        Subclasses must provide the implementation for this method.
+        """
+        pass
+
+    @abstractmethod
+    def training(self) -> None:
+        """
+        Abstract method to be implemented for training the network.
+        Subclasses must provide the implementation for this method.
+        """
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def save() -> None:
+        """
+        Abstract static method to be implemented for saving the network's state or model.
+        Subclasses must provide the implementation for this method.
+        """
+        pass
+
 
 class Neural_Network(INetwork):
     
-    def __init__(self,name,params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,transformations=[],verbose=False):
+    def __init__(
+        self, 
+        name: str, 
+        params: Optional[dict] = None, 
+        data_train: Optional[np.ndarray] = None, 
+        output_train: Optional[np.ndarray] = None, 
+        N: int = 1000, 
+        n: int = 10, 
+        train: bool = True, 
+        do_HPO: bool = False, 
+        transformations: Optional[list] = None, 
+        verbose: bool = False,
+        device: str = '/CPU:0'
+    ):
+        """
+        Initializes the Neural_Network instance.
+        
+        Args:
+            name (str): Name of the network.
+            params (Optional[dict]): Hyperparameters of the network.
+            data_train (Optional[np.ndarray]): Training data.
+            output_train (Optional[np.ndarray]): Training outputs.
+            N (int): Number of epochs for training.
+            n (int): Batch size for training.
+            train (bool): Flag to indicate if training should be performed.
+            do_HPO (bool): Flag to indicate if hyperparameter optimization is to be performed.
+            transformations (Optional[list]): List of transformations to apply to the data.
+            verbose (bool): Flag to indicate verbosity of the output.
+            device (str): denotes GPU or CPU 
+        """
         K.clear_session()
-        self.name=name
-        self.params=params
-        self.N=N    # epochs
-        self.n=n    # batch size    
-        self.verbose=verbose
-        self.hist=None
-        self.data_train=data_train
-        # NON VALE LA PENA SALVARSI SOLO LE DIMENSIONI?
-        self.output_train=output_train
-        self.transformations=transformations
-        self.input_shape=1
-        self.output_shape=1
-        self.inputs=None
+        self.name = name
+        self.params = params
+        self.N = N
+        self.n = n
+        self.verbose = verbose
+        self.hist = None
+        self.data_train = data_train
+        self.output_train = output_train
+        self.transformations = transformations if transformations is not None else []
+        self.inputs = None
 
-        if data_train is not None and len(data_train.shape) > 1:
-            self.input_shape = data_train.shape[1]
-      
-        if output_train is not None and len(output_train.shape) > 1:
-            self.output_shape = output_train.shape[1] 
-
-        if (do_HPO or params is None):
-            if (output_train is None or data_train is None):
+        # Set input and output shapes based on training data dimensions
+        self.input_shape = self._get_shape(data_train)
+        self.output_shape = self._get_shape(output_train)
+        # Perform hyperparameter optimization if required or if no parameters are provided
+        if do_HPO or params is None:
+            if output_train is None or data_train is None:
                 warning_message = "Not enough data given!"
                 warnings.warn(warning_message, UserWarning)
-            self.params=self.HPO(data_train,output_train)
-        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)
+            self.params = self.HPO(data_train, output_train, device=device)
 
-        if(train):
-            self.hist=self.training(data_train,output_train,epoch=self.N,batch=self.n) 
-            plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
+        # Initialize the model
+        self.model = getModel(self.params, self.input_shape, self.name, self.output_shape)
+
+        # Train the model if required
+        if train:
+            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device) 
+            self.plot_training_loss()
+
+    def _get_shape(self, data: Optional[np.ndarray]) -> int:
+        """
+        Gets the shape of the data.
+
+        Args:
+            data (Optional[np.ndarray]): The data to get the shape of.
+
+        Returns:
+            int: The shape of the data.
+        """
+        return data.shape[1] if data is not None and len(data.shape) > 1 else 1
+
+
+    def plot_training_loss(self) -> None:
+        """
+        Plots the training loss.
+        """
+        if self.hist is not None and 'loss' in self.hist.history:
+            plt.plot(self.hist.history['loss'][100:], label='Training Loss')
+            plt.title('Mean Squared Error (MSE) over Epochs')
+            plt.xlabel('Epochs')
+            plt.ylabel('MSE')
+            plt.legend()
+            plt.show()
+        else:
+            warnings.warn("No training history or 'loss' key found.", UserWarning)
+
+
+    @compute_time
+    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int, device: str = '/CPU:0') -> Any:
+        """
+        Trains the model on the given data.
+        
+        Args:
+            x (np.ndarray): Training data.
+            y (np.ndarray): Training outputs.
+            epoch (int): Number of epochs for training.
+            batch (int): Batch size for training.
+
+        Returns:
+            Any: The training history.
+        """
+        
+        with tf.device(device):
+
+            self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
+        
+        return self.hist
+
+
+    def prediction(self, x_test: np.ndarray) -> np.ndarray:
+        """
+        Makes predictions on the test data.
+
+        Args:
+            x_test (np.ndarray): Test data.
+
+        Returns:
+            np.ndarray: Predicted values.
+        """
+        if self.verbose:
+            return self.model.predict(x_test)
+        else:
+            with Suppressor():
+                return self.model.predict(x_test)
+
+
+    def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
+        """
+        Performs hyperparameter optimization using Bayesian optimization.
+
+        Args:
+            data_train (np.ndarray): Training data.
+            output_train (np.ndarray): Training outputs.
+
+        Returns:
+            Dict[str, Any]: The best hyperparameters found.
+        """
+        def objective(trial):
+            K.clear_session()
+            params = {
+                "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
+                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
+                "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+                "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+
+            }
+            with tf.device(device):
+                loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+            
+            return loss
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=5, n_jobs=-1)  # Parallelize trials
+        best_params = study.best_params
+        return best_params
+
+    def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Objective function to minimize during hyperparameter optimization.
+
+        Args:
+            params (Dict[str, Any]): Hyperparameters to evaluate.
+
+        Returns:
+            Dict[str, Any]: The loss value and parameters.
+        """
+        K.clear_session()
+        loss = kCrossVal(self.n, self.N, self.data_train, self.output_train, params, self.name, self.input_shape, self.output_shape)
+        return {"loss": loss, "params": params, "status": STATUS_OK}
+
+
+    def performance(self, data_test: np.ndarray, output_test: np.ndarray) -> Tuple[float, float]:
+        """
+        Evaluate the performance of the model on test data.
+
+        Args:
+            data_test (np.ndarray): Test data.
+            output_test (np.ndarray): Expected output data.
+
+        Returns:
+            Tuple[float, float]: Test Mean Squared Error (MSE) and R^2 score.
+        """
+        pred = self.prediction(data_test)
+
+        if len(output_test.shape) < len(pred.shape):
+            output_test = output_test[:, _]
+        
+        test_mse = np.mean(np.square(output_test - pred))
+        print(f"Test MSE: {test_mse}")
+
+        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(
+            np.square(output_test - np.mean(output_test))
+        )
+        print(f"R^2: {r2}")
+        
+        return test_mse, r2   
+
+
+    def save(self, path: str, identifier: str="_") -> None:
+        """
+        Save the NN model and the class instance.
+
+        Args:
+            path (str): Directory path to save the model and instance.
+            identifier (str): Identifier for the saved files.
+        """
+        # Ensure the directory exists
+        os.makedirs(path, exist_ok=True)
+
+        # Save the Keras model separately
+        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
+        self.model.save(model_path)
+
+        # Save the class instance excluding the Keras model
+        temp_model = self.model
+        self.model = None
+        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'wb') as f:
+            pickle.dump(self, f)
+
+        # Restore the model attribute
+        self.model = temp_model
+
+    @classmethod
+    def load(cls, path: str, identifier: str) -> ' Neural_Network':
+        """
+        Load the NN model and the class instance.
+
+        Args:
+            path (str): Directory path from which to load the model and instance.
+            identifier (str): Identifier for the saved files.
+
+        Returns:
+             Neural_Network: The loaded  Neural_Network instance.
+        """
+        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
+            instance = pickle.load(f)
+
+        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
+        custom_objects = {
+            'mse': MeanSquaredError()  # Add any custom objects required by the model
+        }
+        instance.model = load_model(model_path, custom_objects=custom_objects)
+
+        return instance
+
+class MultiFidelity(INetwork):
+        
+    def __init__(self, 
+                 names: List[str], 
+                 params: Optional[List[dict]] = None, 
+                 data_train: Optional[List[np.ndarray]] = None, 
+                 output_train: Optional[List[np.ndarray]] = None, 
+                 N: Optional[List[int]] = None, 
+                 n: Optional[List[int]] = None, 
+                 do_HPO: bool = False, 
+                 verbose: bool = False,
+                 device: str ='/CPU:0'):
+        """
+        Initialize MultiFidelity network.
+
+        Args:
+            names (List[str]): Names of the networks.
+            params (Optional[List[dict]]): Parameters for each network.
+            data_train (Optional[List[np.ndarray]]): Training data for each network.
+            output_train (Optional[List[np.ndarray]]): Training outputs for each network.
+            N (Optional[List[int]]): Number of epochs for each network.
+            n (Optional[List[int]]): Batch sizes for each network.
+            do_HPO (bool): Whether to perform hyperparameter optimization.
+            verbose (bool): Whether to print verbose output.
+            device (str): denotes GPU or CPU 
+        """
+        self.names = names
+        self.Ns = N if N is not None else [1000] * len(names) 
+        self.ns = n if n is not None else [10] * len(names)  
+        self.data_train = data_train
+        self.output_train=output_train
+        self.steps = int((len(names) - 1) / (len(data_train) - 1)) + 1
+        self.model_list = []
+        self.transformations = []
+        self.input_shape = 1
+        self.output_shape = 1
+
+        if not data_train or not output_train or len(data_train) != len(output_train):
+            raise ValueError('The data are incoherent or insufficient')
+
+        if data_train and len(data_train[0].shape) > 1:
+            self.input_shape = data_train[0].shape[1]
+
+        if output_train and len(output_train[0].shape) > 1:
+            self.output_shape = output_train[0].shape[1]
+
+        K.clear_session()
+        if params is None:
+            params = [None] * len(names)
+        elif len(params) < len(names):
+            params += [None] * (len(names) - len(params))
+
+        count = 1
+        for index, name in enumerate(names):
+            model = NetworkFactory.build_network(
+                name,
+                params=params[index],
+                data_train=data_train[count - 1],
+                output_train=output_train[count - 1],
+                N=self.Ns[index],
+                n=self.ns[count - 1],
+                train=True,
+                do_HPO=do_HPO,
+                verbose=verbose,
+                device=device
+            )
+            self.model_list.append(model)
+            
+            if (index + 1) == (self.steps - 1) * (count - 1) + 1:
+                count += 1
+
+            for i in range(count - 1, len(data_train)):
+                data_train[i] = np.c_[data_train[i], model.prediction(data_train[i])]
+
+
+    def plot_training_loss(self) -> None:
+        """
+        Plot training loss for all models in the MultiFidelity network.
+        """
+        for model in self.model_list:
+            model.plot_training_loss()
+
+
+    
+    # FUNZIONE PER TRAINING
+    # FUNZIONE PER HPO
+
+    def performance(self, data_test: np.ndarray, output_test: np.ndarray, position: Optional[int] = None) -> Tuple[float, float]:
+        """
+        Evaluate the performance of the model.
+
+        Args:
+            data_test (np.ndarray): Test data.
+            output_test (np.ndarray): Expected output data.
+            position (Optional[int]): Position of the model in the model list to evaluate.
+
+        Returns:
+            Tuple[float, float]: Test Mean Squared Error (MSE) and R^2 score.
+        """
+        if position is None:
+            position = len(self.model_list)
+        elif not isinstance(position, int) or position > len(self.model_list):
+            raise ValueError('The required NN is not existent')
+
+        data = copy.copy(data_test)
+
+        for i in range(position - 1):
+            pred=self.model_list[i].prediction(data)
+            if len(pred.shape)<=1:
+                data = np.c_[data, pred.reshape(-1, 1)]
+            else:
+                data = np.c_[data, pred]
+
+
+        pred = self.model_list[position - 1].prediction(data)
+
+        if len(output_test.shape) < len(pred.shape):
+            output_test = output_test[:, np.newaxis]
+
+        test_mse = np.mean(np.square(output_test - pred))
+        print(f"Test MSE: {test_mse}")
+
+        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
+        print(f"R^2: {r2}")
+
+        return test_mse, r2
+
+    def prediction(self, data_test: np.ndarray) -> np.ndarray:
+        """
+        Make predictions using the multi-fidelity model.
+
+        Args:
+            data_test (np.ndarray): Test data.
+
+        Returns:
+            np.ndarray: Predictions.
+        """
+        self.outputs = data_test
+
+        if len(self.outputs.shape) == 1:
+            self.outputs = self.outputs.reshape(-1, 1)
+
+        for index in range(len(self.names)):
+            self.outputs = np.c_[self.outputs, self.model_list[index].prediction(self.outputs)]
+
+        return self.outputs[:, -self.output_shape:]
+
+    def save(self, path: str, identifier: str = "_") -> None:
+        """
+        Save all models in the model_list to the specified path.
+
+        Args:
+            path (str): Directory to save the models.
+            identifier (str): Identifier to append to the model names.
+        """
+        # Ensure the directory exists
+        os.makedirs(path, exist_ok=True)
+
+        # Save each model in the model_list with a unique identifier
+        for index, model in enumerate(self.model_list):
+            model_name = identifier + self.names[index]
+            model.save(os.path.join(path, f'model_{model_name}.h5'))
+
+    def training(self):
+        pass
+    
+    def HPO(self):
+        pass
+    
+    @classmethod
+    def load(cls, path: str, identifier: str) -> 'MultiFidelity':
+        """
+        Load all models into the model_list from the specified path.
+
+        Args:
+            path (str): Directory from which to load the models.
+            identifier (str): Identifier used in the model names.
+
+        Returns:
+            MultiFidelity: An instance of the MultiFidelity class with loaded models.
+        """
+        # Create an instance of MultiFidelity without training data
+        instance = cls(names=[], params=[], data_train=[], output_train=[], N=[], n=[])
+
+        # Load each model from the specified path
+        for name in instance.names:
+            model_path = os.path.join(path, f'model_{identifier + name}.h5')
+            model = Neural_Network.load(model_path, identifier + name)
+            instance.model_list.append(model)
+
+        return instance
+
+
+    def get_output(self) -> np.ndarray:
+        """
+        Get the final output from the outputs.
+
+        Returns:
+            np.ndarray: The last output.
+        """
+        return self.model_list[-1].prediction(self.data_train[-1])
+
+
+class LSTM_network(INetwork):
+
+    def __init__(self, 
+                 params: Optional[dict] = None, 
+                 data_train: Optional[np.ndarray] = None, 
+                 output_train: Optional[np.ndarray] = None, 
+                 N: int = 1000, 
+                 train: bool = True, 
+                 do_HPO: bool = False, 
+                 transformations: List[Any] = [], 
+                 verbose: bool = False,
+                 device: str = '/CPU:0'):
+        """
+        Initialize LSTM_network instance.
+        Args:
+            params (Optional[dict]): Hyperparameters for the network.
+            data_train (Optional[np.ndarray]): Training data.
+            output_train (Optional[np.ndarray]): Training outputs.
+            N (int): Number of epochs for training.
+            train (bool): Flag to indicate if training should be performed.
+            do_HPO (bool): Flag to indicate if hyperparameter optimization is to be performed.
+            transformations (List[Any]): List of transformations to apply to the data.
+            verbose (bool): Flag to indicate verbosity of the output.
+            device (str): denotes GPU or CPU 
+
+        """
+        self.params = params
+        self.name = "LSTM" 
+        self.N = N
+        self.verbose = verbose
+        self.hist = None
+        self.data_train = data_train
+        self.output_train = output_train
+        self.transformations = transformations
+
+        self.input_shape = 1
+        self.output_shape = 1
+        self.inputs = None
+
+        # Determine input and output shapes
+        if data_train is not None and len(data_train.shape) > 1:
+            self.input_shape = data_train.shape[-1]
+        if output_train is not None and len(output_train.shape) > 1:
+            self.output_shape = output_train.shape[-1]
+
+        # Perform hyperparameter optimization if required
+        if do_HPO or params is None:
+            if output_train is None or data_train is None:
+                warnings.warn("Not enough data given!", UserWarning)
+            self.params = self.HPO(data_train, output_train,device=device)
+
+        # Initialize the model
+        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
+
+        # Train the model if required
+        if train: 
+            self.hist = self.training(int(params['sequence_length']),int(params['sequence_freq']),epoch=self.N,device=device) 
+            self.plot_training_loss()
+        else:
+            name = './models/MF_POD_model'
+            self.model = tf.keras.models.load_model(name) 
+
+
+    @compute_time
+    def training(self,seq_length,seq_freq,epoch, device: str = '/CPU:0'):
+        """
+        Train the LSTM model.
+
+        Args:
+            seq_length (int): Sequence length for training.
+            seq_freq (int): Sequence frequency for training.
+            epoch (int): Number of epochs for training.
+
+        Returns:
+            tf.keras.callbacks.History: Training history.
+        """
+        self.sequence_length = seq_length
+        self.sequence_freq = seq_freq
+        self.input_train_seq, self.output_train_seq = self._sliding_windows(self.data_train, self.output_train, self.sequence_length, self.sequence_freq)
+
+        callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self.params['patience'], restore_best_weights=True)
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism() # for reproducibility
+        with tf.device(device):
+
+            self.hist = self.model.fit(self.input_train_seq, self.output_train_seq, epochs=epoch, verbose = self.verbose, callbacks=[callback])
+
+        return self.hist
+
+    def plot_training_loss(self) -> None:
+        """
+        Plots the training loss.
+        """
+        if self.hist is not None and 'loss' in self.hist.history:
+            plt.plot(self.hist.history['loss'][100:], label='Training Loss')
             plt.title('Mean Squared Error (MSE) over Epochs')
             plt.xlabel('Epochs')
             plt.ylabel('MSE')
             plt.legend()
             plt.show()
 
-    def variable_input(self, input_discr):
-        # function to give a value at the input variable when solving the inverse problem from a Multilevel perspective
-        self.inputs = input_discr
-          
-    @compute_time
-    def training(self,x,y,epoch,batch):
-        # DUBBIO : va definita variabile hist?
-        self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
-        return self.hist
+    def prediction(self, x_test: np.ndarray) -> np.ndarray:
+        """
+        Make predictions using the LSTM model.
 
-    def prediction(self,x_test):
-        if(self.verbose):
-            y_pred=self.model.predict(x_test)#[:,0]             # <-------------  commentato il 6/03
+        Args:
+            x_test (np.ndarray): Test data.
+
+        Returns:
+            np.ndarray: Predicted values.
+        """
+        if self.verbose:
+            y_pred = self.model.predict(x_test)
         else:
             with Suppressor():
-
-                y_pred = self.model.predict(x_test)#[:,0]       # <--------------- commentato il 6/03
-        return y_pred  
-    
-    # def wrapper_prediction(self,x_test):
-    #     # ricontrolla
-    #     # ---- caso shear cube ----
-    #     # if (x_test.ndim==1 and self.data_train.shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
-    #     #     x_test=x_test.reshape(-1,1).T
-    #     # elif (x_test.ndim==1):
-    #     #     x_test=x_test.reshape(-1,1)
-    #     # -----------
-    #     print("x_test")
-    #     print(x_test.shape)
-    #     if (x_test.ndim==1):
-    #         x_test=x_test.reshape(-1,1)
-    #         # ----- sostituito 
-    #     x_test=x_test.T # VEDI
-    #     #print(x_test.shape)
-    #     if self.transformations:
-    #         x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-    #     else:
-    #         x_final = x_test
-    #     print("x_final")
-    #     print(x_final)    
-    #     x_final=np.tile(x_final,(self.inputs.shape[0],1))
-    #     #print(x_final.shape)
-    #     #print(np.concatenate((self.inputs,x_final),axis=1).shape)
-    #     rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()
-    #     #print(rep.shape)
-    #     return rep
-    def wrapper_prediction(self,x_test,multi_input=False):
-        # ricontrolla, se usata solo per param inv si potra mettere private
-    
-
-        if (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        x_test=x_test.T # VEDI
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-            # mettere messaggio di errore quando inputs non riempiton 
-
-        x_final=np.tile(x_final,(self.inputs.shape[0],1))
-
+                y_pred = self.model.predict(x_test)
+        return y_pred
         
-        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()#.flatten()
+    def performance(self, data_test: np.ndarray, output_test: np.ndarray, position: Optional[int] = None) -> Tuple[float, float]:
+        """
+        Evaluate the performance of the LSTM model.
 
-        return rep
-    
-    @compute_time
-    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-            # I should insert the 
-        self.transformations=transformation
-        self.inputs=x_data
+        Args:
+            data_test (np.ndarray): Test data.
+            output_test (np.ndarray): Test outputs.
+            position (Optional[int]): Position of the model in the model list.
 
-        # rivedere la questione dimensioni (x_real!=y_obs)
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
+        Returns:
+            Tuple[float, float]: Mean Squared Error (MSE) and R-squared (R^2) values.
+        """
+        data = copy.copy(data_test)
+        if position is None:
+            position = len(self.model_list)
+        elif not isinstance(position, int) or position > len(self.model_list):
+            raise ValueError('The required NN does not exist.')
 
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning) 
+        # Iterate through the model list and make predictions
+        for i in range(position - 1):
+            data = np.concatenate((data, self.model_list[i].wrapper_prediction(data).reshape(-1, 1)), axis=1)
 
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
+        # Predict using the specified model
+        pred = self.model_list[position - 1].prediction(data)
 
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        # prior
-        # if(mean_prior.shape[0]==1):
-        #     my_prior=beta(1.,1.)
-        # else:
-        #     my_prior = multivariate_normal(mean_prior, cov_prior) 
-        my_prior = multivariate_normal(mean_prior, cov_prior) 
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check   
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
-            print(y_obs.shape)
-            #if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
-            y_obs=y_obs.flatten() #
-
-
-
-        # likelihood
-        if levels>1:
-            my_loglike=[]
-            my_posterior=[]
-            if(levels>len(self.model_list)):
-                warning_message = "number of levels is exceeding the number of models"
-                warnings.warn(warning_message, UserWarning)
-            else:
-                # caso l> 2, ancora da implementare per gestione input reti     
-                #for i in range(levels): 
-                #    self.model_list[i].variable_input(x_data)  
-                #    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
-                ## SEZIONE TEMPORANEA
-                for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
-                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
-                print(len(my_posterior))
-                ## SEZIONE TEMPORANEA
-        
-        else:
-            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-           # print(my_posterior)
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
+        # Ensure the output shape matches the prediction shape
+        if len(output_test.shape) < len(pred.shape):
+            output_test = output_test[:, np.newaxis]
             
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        error=np.abs(estimates-x_real)/np.abs(x_real+1e-10)
-        return estimates, error
-    
-    def save(self,discr="_",place=""):
-        print("saving the model ...")
-        folder=os.path.join(place,f"{self.name}_model{discr}.h5")
-        save_model(self.model,folder)
-
-    
-    def performance(self,data_test,output_test):
-
-        data=copy.copy(data_test)
-        pred=self.prediction(data)#[:,0]pred=self.wrapper_prediction(data_test)#[:,0]
-        
-        if len(output_test.shape)<len(pred.shape):
-            output_test=output_test[:,np.newaxis]
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
 
-        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
+        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
         print(f"R^2: {r2}")
-        
-        return (test_mse,r2)
-    
-    @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, cov_search=False,transformations=[], algo="MH"):
-        
-        self.transformations=transformations
-        
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-        
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-            
-            
-        my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
-        
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=0.5,size=y_obs.shape)
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
-        
-        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-        
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo)
-        
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-    
-    
-    # CUQI CASE
-    @compute_time
-    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5,sd_noise=0.1,proposal_sd=0.3,adapt=False,scale=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
 
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
+        return test_mse, r2
 
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-              
-        if (x_init is None):
-            x_init=np.random.rand(dim)
-        elif isinstance(x_init, (int, float)):
-            x_init=x_init*np.ones(dim)
+    def save(self, path: str, identifier: str) -> None:
+        """
+        Save the LSTM model and the class instance.
 
-        if algo=="NUTS":
-            fun=Function(self.wrapper_prediction)
-            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Gaussian(mean=mean_prior,cov=cov_prior)
-        else:    
-            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
-        y=Gaussian(mean=A(x),cov=proposal_sd)
-        
-        if(y_obs is None):
-            y_obs=y(x=x_real).sample()
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
-
-        # posterior=JointDistribution(y,x)(y=y_obs)
-        
-        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        # samples=sampler.sample_adapt(N-burn_in,burn_in)
-        
-        # if(diagnostic is True):
-        #     samples.plot_trace()
-        #     mean=samples.mean()
-        #     print(f"Mean values= {mean}")
-        #     ESS=samples.compute_ess()
-        #     print(f"ESS= {ESS}")
-        #     samples.plot_autocorrelation()
-        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
-        
-        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo, adapt=adapt, scale=scale)
-        estimates=np.mean(estimates,axis=1)
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-    
-
-
-    def objective(self,par): 
-        #print(self.name)
-        K.clear_session()
-        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.input_shape)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
-        return {"loss": CVres, "params": par, "status": STATUS_OK}   
-
-
-    def HPO(self,data_train,output_train):
-
-        MAX_EVAL = 5
-
-        bayes_trials = Trials()
-        opt_list = ["Adam", "Adamax"]
-        kernel_list = ["uniform", "glorot_uniform"]
-        aux_dic = {"opt": opt_list, "kernel_init": kernel_list}
-        space = {
-        "nodes": hp.qloguniform("nodes", np.log(4), np.log(64), 2),
-        "l2weight": hp.loguniform("l2weight", np.log(0.0001), np.log(1)),
-        "lr": hp.loguniform("lr", np.log(0.0001), np.log(0.1)),
-        "kernel_init": hp.choice("kernel_init", kernel_list),
-        "opt": hp.choice("opt", opt_list),
-        }
-
-        best_params = fmin(fn = self.objective,
-                        space = space,
-                        algo = tpe.suggest,
-                        max_evals = MAX_EVAL,
-                        trials = bayes_trials)
-        transfBestparam(best_params, aux_dic)
-        #self.params=best_params
-        
-        print("Best parameters from the HPO:")
-        print(best_params)
-        return best_params
-    
-        
-    
-class MultiFidelity(INetwork):
-   
-    def __init__(self,names,params=None,data_train=None,output_train=None,N=None,n=None,do_HPO=False,verbose=False):
-        # names: list of strings, names of the networks (if the discretizations layer that we consider are 2, len(names)==nb_steps)
-        # params: list of dictionaries
-        # N: list of epochs
-        # n: list of batch_sizes
-        # data_train: list of inputs
-        # output_train: list of outputs 
-        self.names=names
-        self.Ns=N
-        self.ns=n
-        self.data_train=data_train
-        self.steps=int((len(names)-1)/(len(data_train)-1))+1
-        self.model_list = []
-        self.outputs = np.empty((0,0))
-        self.transformations=[]
-        self.input_shape=1
-        self.output_shape=1
-
-        if len(data_train)!=len(output_train) or data_train is None or output_train is None or len(data_train)==0 or len(output_train)==0:
-            raise ValueError('The data are incoherent or insufficient')
-
-        if data_train is not None and len(data_train[0].shape) > 1:
-            self.input_shape = data_train[0].shape[1] 
-
-        if output_train is not None and len(output_train[0].shape) > 1:
-            self.output_shape = output_train[0].shape[1] 
-
-        K.clear_session()
-        if len(params)<len(self.names):
-            diff = len(self.names) - len(params)
-            params += [None] * diff
-                        
-        count=1             
-        for index, name in enumerate(names):  # number networks
-            # ATTENTION to the fact that the "number of dataset" is denoted by the number of discretizations considered 
-        
-            #print(data_train[count-1].shape)
-            model=NetworkFactory.build_network(name,params=params[index],data_train=data_train[count-1],output_train=output_train[count-1],N=self.Ns[index],n=self.ns[count-1],train=True,do_HPO=do_HPO,verbose=verbose)
-            self.model_list.append(model)
-            # self.outputs.append(model.prediction(self.outputs)) 
-            if (index+1)==(self.steps-1)*(count-1)+1:
-                count=count+1
-           # print(data_train[count:].shape)
-            data_train[count-1:] = [np.c_[matrix, model.prediction(matrix)] for matrix in data_train[count-1:]]
-            #for i in range(len(data_train)):
-            #    print(data_train[i].shape)
-
-            # data_train[index+1]=np.c_[data_train_HF,model.prediction(data_train_HF)]     # caso con LF di seguito non è mai capitato finora    LINEA VERA
-            # debugging purpose
-            # indici_piu_vicini = trova_indici_piu_vicini(data_train_LF[:,0], data_train_HF[:,0])
-            # print(indici_piu_vicini)
-            # data_train_HF=np.c_[data_train_HF,output_train_LF[indici_piu_vicini]] 
-            
-            #data_train_HF=np.c_[data_train_HF,output_train_HF]     # caso con LF di seguito non è mai capitato finora
-    
-    def prediction(self,data_test):
-        self.outputs = data_test
-
-        if(len(self.outputs.shape)==1):
-            self.outputs=self.outputs.reshape(-1,1)
-
-        for index, _ in enumerate(self.names):
-            #print(index)
-            #print(self.outputs)
-            self.outputs=np.c_[self.outputs,self.model_list[index].prediction(self.outputs)]
-        #print(self.output_shape)
-        #print("output")
-        #print(self.outputs[:,-self.output_shape:])
-        return self.outputs[:,-self.output_shape:]
-
-
-    def performance(self,data_test,output_test,position=None):
-        
-        data=copy.copy(data_test)
-        if(position is None):
-            position=len(self.model_list)
-        elif(not isinstance(position, int) or position>len(self.model_list)):
-            raise ValueError('the required NN is not existent')
-        
-        for i in range(position-1):
-            data = np.concatenate(
-                    (data,  self.model_list[i].wrapper_prediction(data).reshape(-1,1)),axis=1
-                ) 
-        
-        pred=self.model_list[position-1].prediction(data)#[:,0]
-  
-        #print(pred.shape)
-        if len(output_test.shape)<len(pred.shape):
-            output_test=output_test[:,np.newaxis]
-        test_mse = np.mean(np.square(output_test - pred))
-        print(f"Test MSE: {test_mse}")
-
-        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
-        print(f"R^2: {r2}")
-        
-        return (test_mse,r2)
-    
-    @compute_time
-    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-            # I should insert the 
-        self.transformations=transformation
-        self.inputs=x_data
-
-        # rivedere la questione dimensioni (x_real!=y_obs)
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning) 
-
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        # prior
-        # if(mean_prior.shape[0]==1):
-        #     my_prior=beta(1.,1.)
-        # else:
-        #     my_prior = multivariate_normal(mean_prior, cov_prior) 
-        my_prior = multivariate_normal(mean_prior, cov_prior) 
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check   
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
-            print(y_obs.shape)
-            #if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
-            y_obs=y_obs.flatten() #
-
-
-
-        # likelihood
-        if levels>1:
-            my_loglike=[]
-            my_posterior=[]
-            if(levels>len(self.model_list)):
-                warning_message = "number of levels is exceeding the number of models"
-                warnings.warn(warning_message, UserWarning)
-            else:
-                # caso l> 2, ancora da implementare per gestione input reti     
-                #for i in range(levels): 
-                #    self.model_list[i].variable_input(x_data)  
-                #    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
-                ## SEZIONE TEMPORANEA
-                for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
-                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
-                print(len(my_posterior))
-                ## SEZIONE TEMPORANEA
-        
-        else:
-            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-           # print(my_posterior)
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        error=np.abs(estimates-x_real)/np.abs(x_real+1e-10)
-        return estimates, error
-    
-
-
-    def wrapper_prediction(self,x_test,multi_input=False):
-        # ricontrolla, se usata solo per param inv si potra mettere private
-    
-
-        if (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        x_test=x_test.T # VEDI
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-            # mettere messaggio di errore quando inputs non riempiton 
-
-        x_final=np.tile(x_final,(self.inputs.shape[0],1))
-
-        
-        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()#.flatten()
-
-        return rep
-
-
-    @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-        # transformations is a list of lambda functions
-        self.transformations=transformation
-
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-        
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        if(mean_prior.shape[0]==1):
-            my_prior=beta(1.,1.)
-        else:
-            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
-        
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
-
-        if levels>1:
-            my_loglike=[]
-            my_posterior=[]
-            if(levels>=len(self.model_list)):
-                warning_message = "number of levels is exceeding the number of models"
-                warnings.warn(warning_message, UserWarning)
-            else:    
-                for i in range(levels):    
-                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
-        else:
-            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-        
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-        
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-    
-    @compute_time
-    def inverse_ML(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-        # transformations is a list of lambda functions
-        self.transformations=transformation
-
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-        
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        if(mean_prior.shape[0]==1):
-            my_prior=beta(1.,1.)
-        else:
-            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
-        
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
-        
-        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-        my_posterior=[]
-
-        for i in range(len(self.model_list)):
-            my_posterior.append(tda.Posterior(my_prior, my_loglike, self.model_list[i].wrapper_prediction))
-        
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-        
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-
-
-
-    # CUQIPY
-    @compute_time
-    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5, sd_noise=0.1,adapt=False,scale=0.3,proposal_sd=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
-
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-              
-        if (x_init is None):
-            x_init=np.random.rand(dim)
-        elif isinstance(x_init, (int, float)):
-            x_init=x_init*np.ones(dim)
-
-        if algo=="NUTS":
-            fun=Function(self.wrapper_prediction)
-            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Gaussian(mean=mean_prior,cov=cov_prior)
-        else:    
-            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
-        y=Gaussian(mean=A(x),cov=proposal_sd)
-        
-        if(y_obs is None):
-            y_obs=y(x=x_real).sample()
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
-
-        
-
-
-        # posterior=JointDistribution(y,x)(y=y_obs)
-        
-        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        # samples=sampler.sample_adapt(N-burn_in,burn_in)
-        
-        # if(diagnostic is True):
-        #     samples.plot_trace()
-        #     mean=samples.mean()
-        #     print(f"Mean values= {mean}")
-        #     ESS=samples.compute_ess()
-        #     print(f"ESS= {ESS}")
-        #     samples.plot_autocorrelation()
-        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
-        
-        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo,adapt=adapt,scale=scale)
-        estimates=np.mean(estimates,axis=1)
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-            
-            
-    def save(self,discr="_",place=""):
-        print("Saving ...")
-        for index, _ in enumerate(self.model_list):
-            folder=os.path.join(place,f"{self.names[index]}_model_{discr}.h5")
-            save_model(self.model_list[index].model,folder)
-            
-    def get_output(self):
-        return self.outputs[-1]
-    
-class LSTM_network(INetwork):
-
-    def __init__(self, params=None, data_train=None,output_train=None,N=1000,train=True,do_HPO=False,transformations=[],verbose=False):
-        self.params=params
-        self.name="LSTM" 
-        self.N=N
-        self.verbose=verbose
-        self.hist=None
-        self.data_train=data_train
-        self.output_train=output_train
-        self.transformations=transformations
-
-        self.input_shape=1
-        self.output_shape=1
-        self.inputs=None
-
-
-        if data_train is not None and len(data_train.shape) > 1:
-            self.input_shape = data_train.shape[-1]
-      
-        if output_train is not None and len(output_train.shape) > 1:
-            self.output_shape = output_train.shape[-1] 
-
-        if (do_HPO or params is None):
-            if (output_train is None or data_train is None):
-                warning_message = "Not enough data given!"
-                warnings.warn(warning_message, UserWarning)
-            self.params=self.HPO(data_train,output_train)
-# da includere in train?
-        self.sequence_length = int(params['sequence_length'])
-        self.sequence_freq = int(params['sequence_freq'])
-        self.input_train_seq, self.output_train_seq = sliding_windows(data_train, output_train, self.sequence_length, self.sequence_freq)
-
-        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
-
-        if train: 
-            #self.hist=self.training(data_train,output_train,epoch=self.N) 
-            self.hist=self.training(self.input_train_seq,self.output_train_seq,epoch=self.N) 
-
-            plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
-            plt.title('Mean Squared Error (MSE) over Epochs')
-            plt.xlabel('Epochs')
-            plt.ylabel('MSE')
-            plt.legend()
-            plt.show()    
-        else:
-            name = './models/MF_POD_model'
-            self.model = tf.keras.models.load_model(name)       
-
-    @compute_time
-    def training(self,x,y,epoch):
-        # DUBBIO : va definita variabile hist?
-        # dubbio: ma ha senso fornire epoch come input nel momento in cui è già tra i dati della classe?
-        callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self.params['patience'], restore_best_weights=True)
-        tf.keras.utils.set_random_seed(29)
-        tf.config.experimental.enable_op_determinism() # for reproducibility
-        self.hist = self.model.fit(x, y, epochs=epoch, verbose = self.verbose, callbacks=[callback])
-
-        return self.hist
-
-
-
-    def prediction(self,x_test):
-        if(self.verbose):
-            y_pred=self.model.predict(x_test)#[:,0]             # <-------------  commentato il 6/03
-        else:
-            with Suppressor():
-
-                y_pred = self.model.predict(x_test)#[:,0]       # <--------------- commentato il 6/03
-        return y_pred  
-
-    def performance(self,data_test,output_test,position=None):
-        
-        data=copy.copy(data_test)
-        if(position is None):
-            position=len(self.model_list)
-        elif(not isinstance(position, int) or position>len(self.model_list)):
-            raise ValueError('the required NN is not existent')
-        
-        for i in range(position-1):
-            data = np.concatenate(
-                    (data,  self.model_list[i].wrapper_prediction(data).reshape(-1,1)),axis=1
-                ) 
-        
-        pred=self.model_list[position-1].prediction(data)#[:,0]
-  
-        #print(pred.shape)
-        if len(output_test.shape)<len(pred.shape):
-            output_test=output_test[:,np.newaxis]
-        test_mse = np.mean(np.square(output_test - pred))
-        print(f"Test MSE: {test_mse}")
-
-        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
-        print(f"R^2: {r2}")
-        
-        return (test_mse,r2)
-    
-    def wrapper_prediction(self,x_test,multi_input=False):
-        # ricontrolla, se usata solo per param inv si potra mettere private
-    
-
-        if (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        x_test=x_test.T # VEDI
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-            # mettere messaggio di errore quando inputs non riempiton 
-
-        nh=101
-        #tempi=
-        x_final=np.tile(x_final,(self.inputs.shape[1],1))
-
-##########################à
-# componente spaziale 
-        def u_LF(x, t, re):
-            A0 = np.exp(re/8.0)
-            return x/(t+1)/(1.0+np.exp(re*(x)/(4*t+4))*((t+1)/A0)**0.5)
-        
-
-        nh=101
-        L=1.
-        x = np.linspace(0, L, nh)
-        re_min, re_max = 80, 500
-        u_lf = np.zeros((1, 70, nh))
-#         u_hf = np.zeros((1, 110, nh))
-        n_POD=16
-        for n in range(self.inputs.shape[1]):       
-            for i in range(x.shape[0]):
-                u_lf[0, n, i] = u_LF(x[i], self.inputs[0,n,0], denormalization(x_final[0],re_max,re_min))
-#                 u_hf[0, n, i] = u_HF(x[i], self.inputs[0,n,0], denormalization(x_final[0],re_max,re_min))
-
-        u_lf_pod=np.reshape(u_lf,(70,nh))
-        ulf_train=u_lf_pod@self.basis
-        ulf_train=np.reshape(ulf_train,(1,70,n_POD))
-#         u_hf=np.reshape(u_hf, (110,nh))
-#         basis, S = compute_randomized_SVD(u_hf, n_POD, nh, 1)
-#         new_inputs=np.reshape(u_lf,(110,nh))@ basis
-
-#         new_inputs=np.reshape(new_inputs,(1,110,16))
-# ##########################
-#         new_inputs=np.concatenate((self.inputs[0,:, :1], x_final, new_inputs[0,:, :]), axis=1)
-        t_grid_lstm, re_grid_lstm = np.meshgrid(self.inputs[0,:,:1], x_final[0])
-        new_inputs = np.concatenate((t_grid_lstm[:,:,np.newaxis], re_grid_lstm[:,:,np.newaxis], ulf_train), axis = 2)
-
-#        new_inputs=new_inputs.reshape(1,new_inputs.shape[0],new_inputs.shape[1])
-
-# # ATTENZIONE  sarebbe da rivedere. Qui stai adattando a dimensioni e ordine del caso Bruger, sarebbe da generalizzare mettendo parametri sempre in fondo o quanto meno specificare
-#         # new_inputs = np.concatenate((self.inputs[:, :1], x_final, self.inputs[:, 1:]), axis=1)
-#         # new_inputs=new_inputs.reshape(1,new_inputs.shape[0],new_inputs.shape[1])
-        rep=self.prediction(new_inputs).flatten()   
-
-        return rep  
-
-    @compute_time
-    def param_inverse(self, basis,mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-            # I should insert the 
-        self.basis=basis    
-        self.transformations=transformation
-        self.inputs=x_data
-
-        # rivedere la questione dimensioni (x_real!=y_obs)
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning) 
-
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        # prior
-        # if(mean_prior.shape[0]==1):
-        #     my_prior=beta(1.,1.)
-        # else:
-        #     my_prior = multivariate_normal(mean_prior, cov_prior) 
-        my_prior = multivariate_normal(mean_prior, cov_prior) 
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check   
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
-            #print(y_obs.shape)
-            #if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
-            y_obs=y_obs.flatten() #
-
-
-
-        # likelihood
-        if levels>1:
-            my_loglike=[]
-            my_posterior=[]
-            if(levels>len(self.model_list)):
-                warning_message = "number of levels is exceeding the number of models"
-                warnings.warn(warning_message, UserWarning)
-            else:
-                # caso l> 2, ancora da implementare per gestione input reti     
-                #for i in range(levels): 
-                #    self.model_list[i].variable_input(x_data)  
-                #    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
-                ## SEZIONE TEMPORANEA
-                for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
-                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
-                print(len(my_posterior))
-                ## SEZIONE TEMPORANEA
-        
-        else:
-            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-           # print(my_posterior)
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        error=np.abs(estimates-x_real)/np.abs(x_real+1e-10)
-        return estimates, error
-    
-    @compute_time
-    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5, sd_noise=0.1,adapt=False,scale=0.3,proposal_sd=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
-        return
-    
-    # def save(self,place=""):
-    #     print("saving the model ...")
-    #     folder=os.path.join(place,f"{self.name}_model.h5")
-    #     save_model_LSTM(self.model,folder)
-
-    def save(self, path, identifier):
+        Args:
+            path (str): Directory path to save the model and instance.
+            identifier (str): Identifier for the saved files.
+        """
         # Ensure the directory exists
         os.makedirs(path, exist_ok=True)
 
@@ -1146,565 +1082,582 @@ class LSTM_network(INetwork):
 
         # Restore the model attribute
         self.model = temp_model
-    # @classmethod
-    # def load(cls, path, identifier):
-    #     # Load the class instance
-    #     with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
-    #         instance = pickle.load(f)
 
-    #     # Load the Keras model
-    #     model_path = os.path.join(path, f'lstm_model_{identifier}.h5')
-    #     instance.model = load_model(model_path)
-
-    #     return instance
     @classmethod
-    def load(cls, path, identifier):
+    def load(cls, path: str, identifier: str) -> 'LSTM_network':
+        """
+        Load the LSTM model and the class instance.
+
+        Args:
+            path (str): Directory path from which to load the model and instance.
+            identifier (str): Identifier for the saved files.
+
+        Returns:
+            LSTM_network: The loaded LSTM_network instance.
+        """
         with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
             instance = pickle.load(f)
-        
+
         model_path = os.path.join(path, f'lstm_model_{identifier}.h5')
         custom_objects = {
-            'mse': MeanSquaredError()  # Add custom objects here
+            'mse': MeanSquaredError()  # Add any custom objects required by the model
         }
         instance.model = load_model(model_path, custom_objects=custom_objects)
-        
+
         return instance
-def load_model_LSTM(name):
-    # Load the model architecture from the JSON file
-    with open(name + ".json", "r") as json_file:
-        loaded_model_json = json_file.read()
-    loaded_model = model_from_json(loaded_model_json)
-
-    # Load the model weights from the HDF5 file
-    weights_filename = name + ".weights.h5"
-    loaded_model.load_weights(weights_filename)
-
-    return loaded_model
 
 
-def save_model_LSTM(model, name):
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(name), exist_ok=True)
+    def _sliding_windows(self, data_input, data_output, seq_length, freq=1):
+        """
+        Generates sliding windows for the given data and labels.
 
-    # Save the model architecture to a JSON file
-    model_json = model.to_json()
-    with open(name + ".json", "w") as json_file:
-        json_file.write(model_json)
+        Args:
+            data (np.ndarray): Input data.
+            labels (np.ndarray): Output labels.
+            seq_length (int): Length of each sequence.
+            seq_freq (int): Frequency of each sequence.
 
-    # Save the model weights to an HDF5 file
-    weights_filename = name + ".weights.h5"
-    model.save_weights(weights_filename)
-class Intermediate(INetwork):
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: Input sequences and corresponding output sequences.
+        """
+        x = []
+        y = []
+
+        for i in range(data_input.shape[0]):
+            for j in range(0, data_input.shape[1] - seq_length, freq):
+                _x = data_input[i, j:(j + seq_length), :]
+                _y = data_output[i, j:(j + seq_length), :]
+                x.append(_x)
+                y.append(_y)
+
+        return np.array(x), np.array(y)
+
+    def param_inverse(self, mean_prior: np.ndarray, x_data: np.ndarray, cov_prior: Optional[np.ndarray] = None, 
+                      cov_noise: float = 0.1, cov_likelihood: Optional[np.ndarray] = None, y_obs: Optional[np.ndarray] = None, 
+                      x_real: Optional[np.ndarray] = None, number_chains: int = 1, N: int = 1000, burn_in: int = 500, 
+                      levels: int = 1, diagnostic: bool = True, rwmh_cov: Optional[np.ndarray] = None, rmwh_scaling: float = 0.1, 
+                      rwmh_adaptive: bool = True, algo: str = "MH", transformation: List[Any] = [], forward_low_fidelity: Optional[Callable] = None, *args) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Perform parameter inversion using MCMC sampling, potentially utilizing a low fidelity forward model.
+
+        Parameters:
+        - mean_prior (np.ndarray): Mean of the prior distribution.
+        - x_data_support (np.ndarray): Input data for the basis reduction.
+        - x_data (np.ndarray): Input data.
+        - cov_prior (Optional[np.ndarray]): Covariance of the prior distribution (optional).
+        - cov_noise (float): Noise covariance.
+        - cov_likelihood (Optional[np.ndarray]): Covariance of the likelihood (optional).
+        - y_obs (Optional[np.ndarray]): Observed data (optional).
+        - x_real (Optional[np.ndarray]): Real parameters (optional).
+        - number_chains (int): Number of MCMC chains.
+        - N (int): Number of MCMC iterations.
+        - burn_in (int): Number of burn-in iterations.
+        - levels (int): Number of model levels.
+        - diagnostic (bool): Flag to enable diagnostic plots.
+        - rwmh_cov (Optional[np.ndarray]): Covariance matrix for RWMH proposal (optional).
+        - rmwh_scaling (float): Scaling factor for RWMH.
+        - rwmh_adaptive (bool): Flag for adaptive RWMH.
+        - algo (str): MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
+        - transformation (List[Any]): List of transformations to apply.
+        - forward_low_fidelity (Optional[Callable]): Low fidelity forward model function (optional).
+        - *args: Additional positional arguments used depending on the class with the data of the LSTM model
+
+        Returns:
+        - Tuple[np.ndarray, np.ndarray]: MCMC estimates of the parameters and relative error of the estimates.
+        """
+
+        # Check if forward_low_fidelity is provided and is a callable function
+        if forward_low_fidelity is None or not callable(forward_low_fidelity):
+            raise KeyError("Provide forward_low_fidelity related to the class of the problem. It must be a callable function")
+
+        self.input_support = args
+        # Store the forward_low_fidelity function for later use
+        self._forward_low_fidelity = forward_low_fidelity
+        # Call the parent class's param_inverse method with the provided parameters
+        return super().param_inverse(
+            mean_prior=mean_prior, 
+            x_data=x_data, 
+            cov_prior=cov_prior, 
+            cov_noise=cov_noise, 
+            cov_likelihood=cov_likelihood, 
+            y_obs=y_obs, 
+            x_real=x_real, 
+            number_chains=number_chains, 
+            N=N, 
+            burn_in=burn_in, 
+            levels=levels, 
+            diagnostic=diagnostic, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=rmwh_scaling, 
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            transformation=transformation
+        )
+
+    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
+        """
+        Wrap the input for prediction by applying low-fidelity forward modeling.
+
+        Args:
+            x_test (np.ndarray): Test data.
+            multi_input (bool): Flag indicating if multiple inputs are used.
+
+        Returns:
+            np.ndarray: Transformed prediction input.
+        """
+        # Call the parent class's _input_wrapper_prediction method
+        x_final = super()._input_wrapper_prediction(x_test, multi_input)
+
+        # Apply forward low-fidelity modeling to the wrapped input
+        prediction_input = self._forward_low_fidelity(x_final=x_final, data_points=self.inputs, *self.input_support)
+
+        return prediction_input#self.prediction(prediction_input).flatten()
     
-    def __init__(self,params=None,data_train=None,output_train=None,N=None,n=None,train=True,do_HPO=False,verbose=False):
-        # names: list of strings, names of the networks (if the discretizations layer that we consider are 2, len(names)==nb_steps)
-        # params: list of dictionaries
-        # N: list of epochs
-        # n: list of batch_sizes
-        # data_train: list of inputs
-        # output_train: list of outputs
-        self.params=params
-        self.names="Inter" 
-        self.N=N
-        self.n=n
-        self.verbose=verbose
-        self.hist=None
-        self.data_train=data_train
-        self.output_train=output_train
-        self.transformations=[]
-        
-        self.input_shape=1
-        self.output_shape=1
+    def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
+        """
+        Performs hyperparameter optimization using Bayesian optimization.
 
+        Args:
+            data_train (np.ndarray): Training data.
+            output_train (np.ndarray): Training outputs.
 
-        if len(data_train)!=2 or len(output_train)!=2:
+        Returns:
+            Dict[str, Any]: The best hyperparameters found.
+        """
+        def objective(trial):
+            K.clear_session()
+            params = {
+                "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
+                "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+                "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+                "sequence_length": trial.suggest_int("sequence_length", 10, 100),
+                "sequence_freq": trial.suggest_int("sequence_freq", 1, 10),
+                "patience": trial.suggest_int("patience", 3, 10),
+            }
+            
+            with tf.device(device):
+
+                loss = kCrossVal_parallel(N=self.n, Nepo=self.N, x=data_train, y=output_train, 
+                                        params=params, name=self.name, input_shape=self.input_shape, 
+                                        output_shape=self.output_shape, p=5, n_jobs=-1)
+            return loss
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=20, n_jobs=-1)
+        best_params = study.best_params
+        return best_params
+    
+class Intermediate(INetwork):
+
+    def __init__(self, 
+                 name: str = "Inter", 
+                 params: Optional[dict] = None, 
+                 data_train: Optional[np.ndarray] = None, 
+                 output_train: Optional[np.ndarray] = None, 
+                 N: int = 1000, 
+                 n: int = 10, 
+                 train: bool = True, 
+                 do_HPO: bool = False, 
+                 transformations: Optional[list] = None, 
+                 verbose: bool = False,
+                 device:str ='/CPU:0'):
+        """
+        Initialize Intermediate network.
+
+        Args:
+            name (str): Name of the network.
+            params (Optional[dict]): Parameters for the network.
+            data_train (Optional[np.ndarray]): Training data for the network.
+            output_train (Optional[np.ndarray]): Training outputs for the network.
+            N (int): Number of epochs for training.
+            n (int): Batch size for training.
+            train (bool): Whether to train the model.
+            do_HPO (bool): Whether to perform hyperparameter optimization.
+            transformations (Optional[list]): List of transformations to apply to the data.
+            verbose (bool): Whether to print verbose output.
+        """
+        K.clear_session()
+        self.name = name
+        self.params = params
+        self.N = N
+        self.n = n
+        self.verbose = verbose
+        self.hist = None
+        self.data_train = data_train
+        self.output_train = output_train
+        self.transformations = transformations if transformations is not None else []
+
+        # Validate and concatenate data
+        if data_train is None or output_train is None or len(data_train) != 2 or len(output_train) != 2:
             raise ValueError('The data are incoherent or insufficient')
                 
-        # in this way, the dataset should be only made of 1 matrix (np.array)         
-        data_train=np.concatenate((data_train[1],data_train[0]),axis=0)
-        output_train=np.concatenate((output_train[1],output_train[0]),axis=0)
-        
-        # number of inputs of the matrix (columns)  (DUBBIO: non si confonde con lista del caso multifidelity?)
-        if data_train is not None and len(data_train.shape) > 1:
-            self.input_shape=data_train.shape[1]
+        data_train = np.concatenate((data_train[1], data_train[0]), axis=0)
+        output_train = np.concatenate((output_train[1], output_train[0]), axis=0)
 
-        if output_train is not None and len(output_train.shape) > 1:
-            self.output_shape=output_train.shape[1]
+        # Set input and output shapes
+        self.input_shape = self._get_shape(data_train)
+        self.output_shape = self._get_shape(output_train)
 
-        if (do_HPO or params is None):
-            if (output_train is None or data_train is None):
-                warning_message = "Not enough data given!"
-                warnings.warn(warning_message, UserWarning)
-            self.params=self.HPO(data_train,output_train)
-        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)
+        if do_HPO or params is None:
+            if output_train is None or data_train is None:
+                warnings.warn("Not enough data given!", UserWarning)
+            self.params = self.HPO(data_train, output_train,device=device)
 
-        if(train):
-        
-            self.hist=self.model.fit(data_train,output_train,epochs=self.N,batch_size=self.n,verbose=0) 
-            plt.plot(self.model.history.history['loss'][100:], label='Training Loss')
+        # Create the model
+        self.model = getModel(self.params, self.input_shape, self.name, self.output_shape)
+
+        if train:
+            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device) 
+            self.plot_training_loss()
+
+    def _get_shape(self, data: Optional[np.ndarray]) -> int:
+        """
+        Gets the shape of the data.
+
+        Args:
+            data (Optional[np.ndarray]): The data to get the shape of.
+
+        Returns:
+            int: The shape of the data.
+        """
+        return data.shape[1] if data is not None and len(data.shape) > 1 else 1
+
+    def plot_training_loss(self) -> None:
+        """
+        Plot the training loss.
+        """
+        if self.hist is not None and 'loss' in self.hist.history:
+            plt.plot(self.hist.history['loss'][100:], label='Training Loss')
             plt.title('Mean Squared Error (MSE) over Epochs')
             plt.xlabel('Epochs')
             plt.ylabel('MSE')
             plt.legend()
             plt.show()
+        else:
+            warnings.warn("No training history or 'loss' key found.", UserWarning)
 
     @compute_time
-    def training(self,x,y,epoch,batch):
-        # DUBBIO : va definita variabile hist?
-        self.hist=self.model.fit(x,y,epochs=epoch,batch_size=batch,verbose=0) 
+    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int,device: str = '/CPU:0') -> Any:
+        """
+        Train the model on the given data.
+
+        Args:
+            x (np.ndarray): Training data.
+            y (np.ndarray): Training labels.
+            epoch (int): Number of epochs.
+            batch (int): Batch size.
+
+        Returns:
+            Any: Training history.
+        """
+        with tf.device(device):
+            self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
+    
         return self.hist
     
-    def prediction(self,x_test):
-        if len(x_test)!=2:
-            raise ValueError("Not enough data given")
-        x_test=np.concatenate((x_test[1],x_test[0]),axis=0)
+    def prediction(self, x_test: np.ndarray) -> np.ndarray:
+        """
+        Make predictions using the model.
 
-        if(self.verbose):
-            y_pred=self.model.predict(x_test)#[:,0]
+        Args:
+            x_test (np.ndarray): Test data.
+
+        Returns:
+            np.ndarray: Predictions.
+        """
+        if self.verbose:
+            return self.model.predict(x_test)
         else:
             with Suppressor():
-                y_pred = self.model.predict(x_test)
-                #print(y_pred)
-                #y_pred = self.model.predict(x_test)[:,0]
-        return y_pred  
-    
-    def wrapper_prediction(self,x_test):
-           # ricontrolla
-        
-        if (x_test.ndim==1 and self.data_train.shape[1]>1 and len(self.transformations)==0):   # e.g. Shear cube case
-            x_test=x_test.reshape(-1,1).T
-        elif (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-        return self.prediction(x_final) 
-    
-    def save(self,discr="_",place=""):
-        print("saving the model ...")
-        folder=os.path.join(place,f"Inter_model{discr}.h5")
-        save_model(self.model,folder)
+                return self.model.predict(x_test)
 
-    def performance(self,data_test,output_test):
-        
-        data_test=np.concatenate((data_test[1],data_test[0]),axis=0)
-        output_test=np.concatenate((output_test[1],output_test[0]),axis=0)
-        
-        pred=self.prediction(data_test)#[:,0]
-        #print(pred.shape)
-        if len(output_test.shape)<len(pred.shape):
-            output_test=output_test[:,np.newaxis]
+    def performance(self, data_test: np.ndarray, output_test: np.ndarray) -> Tuple[float, float]:
+        """
+        Evaluate the performance of the model.
+
+        Args:
+            data_test (np.ndarray): Test data.
+            output_test (np.ndarray): Test labels.
+
+        Returns:
+            Tuple[float, float]: Test MSE and R^2 score.
+        """
+        pred = self.prediction(data_test)
+
+        if len(output_test.shape) < len(pred.shape):
+            output_test = output_test[:, np.newaxis]
+
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
 
-        r2= 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
+        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
         print(f"R^2: {r2}")
         
-        return (test_mse,r2)
-    
+        return test_mse, r2
 
-        
-    @compute_time
-    def param_inverse(self, mean_prior, x_data, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, levels=1,diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-            # I should insert the 
-        self.transformations=transformation
-        self.inputs=x_data
+    def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Objective function for hyperparameter optimization.
 
-        # rivedere la questione dimensioni (x_real!=y_obs)
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
+        Args:
+            params (dict): Hyperparameters.
 
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning) 
-
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        # prior
-        # if(mean_prior.shape[0]==1):
-        #     my_prior=beta(1.,1.)
-        # else:
-        #     my_prior = multivariate_normal(mean_prior, cov_prior) 
-        my_prior = multivariate_normal(mean_prior, cov_prior) 
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) # check   
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape) 
-            print(y_obs.shape)
-            #if(len(y_obs.shape)==1):   # if introduced when working on LV 3 outputs, I think the condition was added with the benchmark cases. CHeck
-            y_obs=y_obs.flatten() #
-
-
-
-        # likelihood
-        if levels>1:
-            my_loglike=[]
-            my_posterior=[]
-            if(levels>len(self.model_list)):
-                warning_message = "number of levels is exceeding the number of models"
-                warnings.warn(warning_message, UserWarning)
-            else:
-                # caso l> 2, ancora da implementare per gestione input reti     
-                #for i in range(levels): 
-                #    self.model_list[i].variable_input(x_data)  
-                #    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                #    my_posterior = [my_posterior, tda.Posterior(my_prior, my_loglike[-1], self.model_list[i].wrapper_prediction)]   # attention, you should put ML model at the end
-                ## SEZIONE TEMPORANEA
-                for i in range(levels):
-                    self.model_list[i].variable_input(x_data) 
-                    my_loglike = [my_loglike, tda.GaussianLogLike(y_obs, cov_likelihood)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[-1], self.model_list[0].wrapper_prediction),tda.Posterior(my_prior, my_loglike[-1], self.wrapper_prediction)] 
-                print(len(my_posterior))
-                ## SEZIONE TEMPORANEA
-        
-        else:
-            my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-           # print(my_posterior)
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        error=np.abs(estimates-x_real)/np.abs(x_real+1e-10)
-        return estimates, error
-    
-
-
-    def wrapper_prediction(self,x_test,multi_input=False):
-        # ricontrolla, se usata solo per param inv si potra mettere private
-    
-
-        if (x_test.ndim==1):
-            x_test=x_test.reshape(-1,1)
-        #print(x_test.shape)
-        x_test=x_test.T # VEDI
-        if self.transformations:
-            x_final = reduce(lambda acc, trasf: np.hstack([acc, trasf(acc)]), self.transformations, x_test)
-        else:
-            x_final = x_test
-            # mettere messaggio di errore quando inputs non riempiton 
-
-        x_final=np.tile(x_final,(self.inputs.shape[0],1))
-
-        
-        rep=self.prediction(np.concatenate((self.inputs,x_final),axis=1)).flatten()#.flatten()
-
-        return rep
-    
-    # TO BE MODIFIED!!
-    @compute_time
-    def inverse(self, mean_prior, cov_prior=None, cov_noise=0.1, cov_likelihood=None, y_obs=None, x_real=None, number_chains=1, N=1000, burn_in=500, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1,rwmh_adaptive=True, algo="MH",transformation=[]):
-        # transformations is a list of lambda functions
-        self.transformations=transformation
-
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-        
-        if(cov_prior is None):
-            cov_prior=mean_prior*0.2
-        if(cov_likelihood is None):
-            cov_likelihood=cov_noise**2*np.eye(x_real.shape[0])
-        
-        if(mean_prior.shape[0]==1):
-            my_prior=beta(1.,1.)
-        else:
-            my_prior = multivariate_normal(mean_prior, cov_prior) # modo per settare uniforme?
-        
-        if(y_obs is None):
-            y_obs=self.wrapper_prediction(x_real)+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=cov_noise,size=y_obs.shape)    # 
-        
-        my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-        my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
-        
-        print(f"real values are {x_real}")
-        
-        if(rwmh_cov is None):
-            rwmh_cov = np.eye(len(x_real))
-            
-        estimates=MCMC(my_posterior,N,burn_in,number_chains,diagnostic=diagnostic,rwmh_cov=rwmh_cov,rmwh_scaling=rmwh_scaling,rwmh_adaptive=rwmh_adaptive,algo=algo,dim=dim)
-        
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-    
-    @compute_time
-    def inverse_cuqi(self, mean_prior, x_real=None,y_obs=None, N=1000, burn_in=500, cov_prior=0.5,sd_noise=0.1,adapt=False,scale=0.3,proposal_sd=0.3,x_init=None,diagnostic=True, number_chains=1, algo="MH"):
-
-        if x_real is not None:
-            dim = x_real.shape[0]
-        elif y_obs is not None:
-            dim=y_obs.shape[0]
-        else: 
-            warning_message = "No observation nor data given"
-            warnings.warn(warning_message, UserWarning)    
-
-        if (N<=burn_in):
-            warning_message = "number of steps insufficient, smaller or equal than burn-in"
-            warnings.warn(warning_message, UserWarning)        
-              
-        if (x_init is None):
-            x_init=np.random.rand(dim)
-        elif isinstance(x_init, (int, float)):
-            x_init=x_init*np.ones(dim)
-
-        if algo=="NUTS":
-            fun=Function(self.wrapper_prediction)
-            A=CuqiModel(forward=self.wrapper_prediction,jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Gaussian(mean=mean_prior,cov=cov_prior)
-        else:    
-            A=CuqiModel(forward=self.wrapper_prediction,range_geometry=Continuous1D(dim),domain_geometry=Continuous1D(dim))
-            x=Uniform(np.zeros(dim),np.ones(dim)*mean_prior*2)  # prior  # mettere if con diverse prior?
-
-        y=Gaussian(mean=A(x),cov=proposal_sd)
-        
-        if(y_obs is None):
-            y_obs=y(x=x_real).sample()
-        else:
-            y_obs=y_obs+np.random.normal(loc=0., scale=sd_noise,size=y_obs.shape)
-
-        
-
-
-        # posterior=JointDistribution(y,x)(y=y_obs)
-        
-        # sampler=MH(posterior,x0=x_init)   # rendere variabile per altri sampler
-        # samples=sampler.sample_adapt(N-burn_in,burn_in)
-        
-        # if(diagnostic is True):
-        #     samples.plot_trace()
-        #     mean=samples.mean()
-        #     print(f"Mean values= {mean}")
-        #     ESS=samples.compute_ess()
-        #     print(f"ESS= {ESS}")
-        #     samples.plot_autocorrelation()
-        #     plot_hist(estimates,x_real, self.wrapper_prediction(mean), self.wrapper_prediction(x_real))
-        
-        estimates= MCMC_cuqi(y,x,y_obs,N,burn_in,number_chains,diagnostic=diagnostic,algo=algo, adapt=adapt, scale=scale)
-        estimates=np.mean(estimates,axis=1)
-        if diagnostic is True:
-            plot_hist(estimates,x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real))
-        
-        return estimates
-            
-    def objective(self,par): 
-        #print(self.name)
+        Returns:
+            Dict[str, Any]: Result of cross-validation.
+        """
         K.clear_session()
-        CVres = kCrossVal(self.n,self.N,self.data_train,self.output_train,par,self.name,self.input_shape)  # ATTENZIONE!! NEL CASO LF, data_train E output_train dovrebbero essere HF (vedere codice Nlf di esempio), correggere
-        return {"loss": CVres, "params": par, "status": STATUS_OK}   
+        loss = kCrossVal(self.n, self.N, self.data_train, self.output_train, params, self.name, self.input_shape, self.output_shape)
+        return {"loss": loss, "params": params, "status": STATUS_OK}
 
+    def HPO(self, data_train: np.ndarray, output_train: np.ndarray,device: str = '/CPU:0') -> Dict[str, Any]:
+        """
+        Hyperparameter Optimization (HPO) using Bayesian optimization.
 
-    def HPO(self,data_train,output_train):
+        Args:
+            data_train (np.ndarray): Training data.
+            output_train (np.ndarray): Training labels.
 
-        MAX_EVAL = 5
+        Returns:
+            Dict[str, Any]: Best hyperparameters.
+        """
+        def objective(trial):
+            K.clear_session()
+            params = {
+                "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
+                "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+                "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+            }
+            with tf.device(device):
 
-        bayes_trials = Trials()
-        opt_list = ["Adam", "Adamax"]
-        kernel_list = ["uniform", "glorot_uniform"]
-        aux_dic = {"opt": opt_list, "kernel_init": kernel_list}
-        space = {
-        "nodes": hp.qloguniform("nodes", np.log(4), np.log(64), 2),
-        "l2weight": hp.loguniform("l2weight", np.log(0.0001), np.log(1)),
-        "lr": hp.loguniform("lr", np.log(0.0001), np.log(0.1)),
-        "kernel_init": hp.choice("kernel_init", kernel_list),
-        "opt": hp.choice("opt", opt_list),
-        }
+                loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+            return loss
 
-        best_params = fmin(fn = self.objective,
-                        space = space,
-                        algo = tpe.suggest,
-                        max_evals = MAX_EVAL,
-                        trials = bayes_trials)
-        transfBestparam(best_params, aux_dic)
-        #self.params=best_params
-        
-        print("Best parameters from the HPO:")
-        print(best_params)
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=5, n_jobs=-1)  # Parallelize trials
+        best_params = study.best_params
         return best_params
+
+    def save(self, path: str, identifier: str = "_") -> None:
+        """
+        Save the NN model and the class instance.
+
+        Args:
+            path (str): Directory path to save the model and instance.
+            identifier (str): Identifier for the saved files.
+        """
+        os.makedirs(path, exist_ok=True)
+
+        # Save the Keras model separately
+        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
+        self.model.save(model_path)
+
+        # Save the class instance excluding the Keras model
+        temp_model = self.model
+        self.model = None
+        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'wb') as f:
+            pickle.dump(self, f)
+
+        # Restore the model attribute
+        self.model = temp_model
+
+    @classmethod
+    def load(cls, path: str, identifier: str) -> 'Intermediate':
+        """
+        Load the NN model and the class instance.
+
+        Args:
+            path (str): Directory path from which to load the model and instance.
+            identifier (str): Identifier for the saved files.
+
+        Returns:
+            Intermediate: The loaded Intermediate instance.
+        """
+        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
+            instance = pickle.load(f)
+
+        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
+        custom_objects = {
+            'mse': MeanSquaredError()  # Add any custom objects required by the model
+        }
+        instance.model = load_model(model_path, custom_objects=custom_objects)
+
+        return instance
+
+# class Intermediate(INetwork):
+#     def __init__(self, 
+#                  params: Optional[dict] = None, 
+#                  data_train: Optional[List[np.ndarray]] = None, 
+#                  output_train: Optional[List[np.ndarray]] = None, 
+#                  N: int = 1000, 
+#                  n: int = 10, 
+#                  train: bool = True, 
+#                  do_HPO: bool = False, 
+#                  verbose: bool = False):
+#         """
+#         Initialize Intermediate network.
+
+#         Args:
+#             params (Optional[dict]): Parameters for the network.
+#             data_train (Optional[List[np.ndarray]]): Training data for the network.
+#             output_train (Optional[List[np.ndarray]]): Training outputs for the network.
+#             N (int): Number of epochs for training.
+#             n (int): Batch size for training.
+#             train (bool): Whether to train the model.
+#             do_HPO (bool): Whether to perform hyperparameter optimization.
+#             verbose (bool): Whether to print verbose output.
+#         """
+#         self.params = params
+#         self.name = "Inter" 
+#         self.N = N
+#         self.n = n
+#         self.verbose = verbose
+#         self.hist = None
+#         self.data_train = data_train
+#         self.output_train = output_train
+#         self.transformations = []
+        
+#         self.input_shape = 1
+#         self.output_shape = 1
+
+#         if len(data_train) != 2 or len(output_train) != 2:
+#             raise ValueError('The data are incoherent or insufficient')
+                
+#         # Concatenate data for training
+#         data_train = np.concatenate((data_train[1], data_train[0]), axis=0)
+#         output_train = np.concatenate((output_train[1], output_train[0]), axis=0)
+        
+#         # Determine input and output shapes
+#         if data_train is not None and len(data_train.shape) > 1:
+#             self.input_shape = data_train.shape[1]
+
+#         if output_train is not None and len(output_train.shape) > 1:
+#             self.output_shape = output_train.shape[1]
+
+#         if do_HPO or params is None:
+#             if output_train is None or data_train is None:
+#                 warnings.warn("Not enough data given!", UserWarning)
+#             self.params = self.HPO(data_train, output_train)
+
+#         # Create the model
+#         self.model = getModel(self.params, self.input_shape, self.name, self.output_shape)
+
+#         if train:
+#             self.hist = self.model.fit(data_train, output_train, epochs=self.N, batch_size=self.n, verbose=self.verbose) 
+#             self.plot_training_loss()
+
+#     @compute_time
+#     def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int) -> Any:
+#         """
+#         Train the model on the given data.
+
+#         Args:
+#             x (np.ndarray): Training data.
+#             y (np.ndarray): Training labels.
+#             epoch (int): Number of epochs.
+#             batch (int): Batch size.
+
+#         Returns:
+#             Any: Training history.
+#         """
+#         self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=self.verbose) 
+#         return self.hist
     
+#     def plot_training_loss(self) -> None:
+#         """
+#         Plot the training loss.
+#         """
+#         if self.hist is not None and 'loss' in self.hist.history:
+#             plt.plot(self.hist.history['loss'][100:], label='Training Loss')
+#             plt.title('Mean Squared Error (MSE) over Epochs')
+#             plt.xlabel('Epochs')
+#             plt.ylabel('MSE')
+#             plt.legend()
+#             plt.show()
 
+#     def prediction(self, x_test: List[np.ndarray]) -> np.ndarray:
+#         """
+#         Make predictions using the model.
 
-    
-# class NetworkFactory:
-#     # CHIAMA ANCHE DA MF
-#     @staticmethod
-#     def build_network(network_type,names=[],params=None,data_train=None,output_train=None,N=1000,n=10,train=True,do_HPO=False,verbose=False):    
+#         Args:
+#             x_test (List[np.ndarray]): Test data.
+
+#         Returns:
+#             np.ndarray: Predictions.
+#         """
+#         if len(x_test) != 2:
+#             raise ValueError("Not enough data given")
         
-#         if (network_type=="LF" or network_type=="MF" or network_type=="HF" or network_type=="Hflin" or network_type=="Hfper" ):
-#             return Neural_Network(network_type,params,data_train,output_train,N,n,train,do_HPO,verbose)
+#         x_test = np.concatenate((x_test[1], x_test[0]), axis=0)
+
+#         if self.verbose:
+#             return self.model.predict(x_test)
+#         else:
+#             with Suppressor():
+#                 return self.model.predict(x_test)
+
+#     def performance(self, data_test: List[np.ndarray], output_test: List[np.ndarray]) -> Tuple[float, float]:
+#         """
+#         Evaluate the performance of the model.
+
+#         Args:
+#             data_test (List[np.ndarray]): Test data.
+#             output_test (List[np.ndarray]): Test labels.
+
+#         Returns:
+#             Tuple[float, float]: Test MSE and R^2 score.
+#         """
+#         data_test = np.concatenate((data_test[1], data_test[0]), axis=0)
+#         output_test = np.concatenate((output_test[1], output_test[0]), axis=0)
         
-#         if (network_type[:-4].isdigit() and network_type.endswith("step") ):#and len(names)==int(network_type[:-4])):
-#             # in this case, data_train, output_train are lists of matrixes containing the data
-#             return MultiFidelity(names,params,data_train,output_train,N,n,do_HPO,verbose)
+#         pred = self.prediction(data_test)
+
+#         if len(output_test.shape) < len(pred.shape):
+#             output_test = output_test[:, np.newaxis]
+
+#         test_mse = np.mean(np.square(output_test - pred))
+#         print(f"Test MSE: {test_mse}")
+
+#         r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
+#         print(f"R^2: {r2}")
         
-#         if (network_type=="Inter"):
-#             return  Intermediate(params,data_train,output_train,N,n,train,do_HPO,verbose)
-        
-#         if (network_type=="LSTM" or network_type=="LSTM2"):
-#             return LSTM(params,data_train,output_train, N, train, do_HPO, verbose)
+#         return test_mse, r2
 
-#         print("Invalid Network")
-#         return -1
-class NetworkFactory:
-    @staticmethod
-    def build_network(network_type, names=[], params=None, data_train=None, output_train=None, N=1000, n=10, train=True, do_HPO=False, verbose=False):
-        if network_type in ["LF", "MF", "HF", "Hflin", "Hfper"]:
-            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose)
-        elif network_type in ["LSTM", "LSTM2"]:
-            return  LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose)
-        elif network_type[:-4].isdigit() and network_type.endswith("step"):
-            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose)
-        elif network_type == "Inter":
-            return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose)
-        else:
-            print("Invalid Network")
-            return -1
+#     def objective(self, par: dict) -> Dict[str, Any]:
+#         """
+#         Objective function for hyperparameter optimization.
 
-def add_noise(noise_std_data, noise_sta_output, data, output):
-    output_flag=output
-    data_flag=data
-    for std1,std2 in zip(noise_std_data,noise_sta_output):
-        noise_1 = np.random.normal(0, std1, output.shape)     
-        noise_2 = np.random.normal(0, std2, data.shape)
-        temp1=output+noise_1
-        temp2=data+noise_2
-        output_flag=np.concatenate((output_flag,temp1),axis=0)
-        #print(data_flag.shape)
-        #print(temp2.shape)
-        data_flag=np.concatenate((data_flag,temp2))
-    return (output_flag,data_flag)
+#         Args:
+#             par (dict): Hyperparameters.
 
+#         Returns:
+#             Dict[str, Any]: Result of cross-validation.
+#         """
+#         K.clear_session()
+#         CVres = kCrossVal(self.n, self.N, self.data_train, self.output_train, par, self.name, self.input_shape)
+#         return {"loss": CVres, "params": par, "status": STATUS_OK} 
 
-class FourierLayer(Layer):
-    def __init__(self, output_dim, **kwargs):
-        self.output_dim = output_dim
-        super(FourierLayer, self).__init__(**kwargs)
+#     def HPO(self, data_train: np.ndarray, output_train: np.ndarray) -> dict:
+#         """
+#         Hyperparameter Optimization (to be implemented).
 
-    def build(self, input_shape):
-        self.kernel_sin = self.add_weight(name='kernel_sin',
-                                          shape=(self.output_dim,),  
-                                          initializer='glorot_uniform',
-                                          trainable=True)
-        self.kernel_cos = self.add_weight(name='kernel_cos',
-                                          shape=(self.output_dim,),   
-                                          initializer='glorot_uniform',
-                                          trainable=True)
-        super(FourierLayer, self).build(input_shape)
+#         Args:
+#             data_train (np.ndarray): Training data.
+#             output_train (np.ndarray): Training labels.
 
-    def call(self, x):
-        result = tf.sin(tf.multiply(x, self.kernel_sin)) + tf.cos(tf.multiply(x, self.kernel_cos))
-        return result
-
-    def compute_output_shape(self, input_shape):
-        return input_shape
-
-
-
-def kCrossVal(N,Nepo,x,y,params,name,input_shape,p=1):
-    #K.clear_session()
-    model = getModel(params,input_shape,name,y.shape[1]) # check che y.shape[1] sia corretto 
-    Nfold = int(N/p)
-    score = np.zeros([Nfold])
-    cv = KFold(n_splits=Nfold,shuffle=True)
-    splits = cv.split(x)
-    i=0
-    for train_index, test_index in splits:
-      x_train = x[train_index,:]
-      y_train = y[train_index]
-      x_val = x[test_index,:]
-      y_val = y[test_index]
-      #model = getModel(params,name)
-      model.fit(x_train,y_train,epochs=Nepo,batch_size=N-p,verbose=0)
-      score[i] = np.mean(np.square(y_val - model.predict(x_val)[:,0]))
-      i = i+1
-    return np.mean(score)
-
-def kCrossValSingle(N, Nepo, x, y, params, name,input_shape):
-    score = np.zeros([N])
-    cv = KFold(N)
-    splits = cv.split(x)
-    model = getModel(params,input_shape, name,y.shape[1]) # check che y.shape[1] sia corretto 
-    i = 0
-    for train_index, test_index in splits:
-        x_train = x[train_index]
-        y_train = y[train_index]
-        x_val = x[test_index]
-        y_val = y[test_index]
-        model.fit(x_train, y_train, epochs=Nepo, batch_size=N - 1, verbose=0)
-        score[i] = np.square(y_val - model.predict(x_val))
-        i = i + 1
-    return np.mean(score)
-
-
-def kCrossValGP(Nhf,Nlf,Nepo,xhf,yhf,xlf,ylf,params,name,input_shape,p=1):
-    Nfolds = int(Nhf/p)
-    score = np.zeros([Nfolds])
-    cv = KFold(n_splits = Nfolds, shuffle = True)
-    splits = cv.split(xhf)
-    i=0
-    N = Nhf + Nlf
-
-    model = getModel(params,input_shape,name,yhf.shape[1]) # check che y.shape[1] sia corretto 
-    for train_index, test_index in splits:
-      xhf_train = xhf[train_index,:]
-      yhf_train = yhf[train_index]
-      xhf_val = xhf[test_index,:]
-      yhf_val = yhf[test_index]
-      x_train = np.concatenate((xhf_train,xlf))
-      yhf_train = np.concatenate((yhf_train,np.full(Nlf,-10)))
-      ylf_train = np.concatenate((np.full(Nhf-p,-10),ylf))
-      model.fit(x_train,[yhf_train,ylf_train],epochs=int(params['epochs'])*Nepo,batch_size=N-p,verbose=0)
-      score[i] = np.mean(np.square(yhf_val - model.predict(xhf_val)[0][:,0]))
-      i = i+1
-    return np.mean(score)
+#         Returns:
+#             dict: Best hyperparameters.
+#         """
+#         pass  # Implement hyperparameter optimization logic here
 
 
 
 
-def transfBestparam(bestparam, dic):
-    # trasforma kernel e opt da parametri numerici (indicatori booleani) a valore stringa
-    for key in bestparam:
-        if key in ["kernel_init", "opt"]:
-            bestparam[key] = dic[key][bestparam[key]]
-    return
 
 
-def getOpti(name,lr):
-  if name == 'Adam':
-      return Adam(learning_rate=lr,amsgrad=True)
-  elif name == 'Nadam':
-      return Nadam(learning_rate=lr)
-  elif name == 'Adamax':
-      return Adamax(learning_rate=lr)
-  elif name == 'RMSprop':
-      return RMSprop(learning_rate=lr)
-  elif name == 'standardadam':
-      return 'adam'
+
+
+

@@ -6,6 +6,7 @@ from sklearn.utils import extmath
 from typing import Any, Optional
 
 class BurgerEquation:
+
     def __init__(self, nh: int = 101, nt: int = 151, T: float = 2.0, L: float = 1.0,
                  nre: int = 20, re_min: float = 80, re_max: float = 500, seed: int = 42):
         """
@@ -21,7 +22,8 @@ class BurgerEquation:
         - re_max (float): Maximum Reynolds number.
         - seed (int): Random seed for reproducibility.
         """
-        self.POD=None
+        self.n_POD=None
+        self.basis=None
         self.nh, self.nt, self.T, self.L = nh, nt, T, L
         self.nre, self.re_min, self.re_max = nre, re_min, re_max
         
@@ -74,35 +76,57 @@ class BurgerEquation:
         A0 = np.exp(re / 8.0)
         return x / (t + 1) / (1.0 + np.exp(re * x / (4 * t + 4)) * ((t + 1) / A0)**0.5)
     
-    def set_POD(self, POD:int, basis):
-        self.POD = POD
-        self.basis=basis
+    def set_POD(self, POD: int, basis: np.ndarray):
+        """
+        Set the POD (Proper Orthogonal Decomposition) basis.
+
+        Parameters:
+        - POD (int): Number of POD modes.
+        - basis (np.ndarray): POD basis matrix.
+        """
+        self.n_POD = POD
+        self.basis = basis
+
+    def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, x_support: np.ndarray) -> np.ndarray:
+        """
+        Generate low fidelity model using POD basis.
+
+        Parameters:
+        - x_final (np.ndarray): Final input data.
+        - x_support (np.ndarray): Support data points.
+        - data_points (np.ndarray): Data points to project onto the POD basis.
+
+        Returns:
+        - new_inputs (np.ndarray): New input data incorporating low fidelity model.
+        """
+        if self.n_POD is None or self.basis is None:
+            raise KeyError("POD basis not provided")
+
+        dim_data = data_points.shape[0]
+        dim_support = x_support.shape[0]
+
+        u_lf_inv = np.zeros((1, dim_data, dim_support))
+
+        for n in range(dim_data):       
+            for i in range(dim_support):
+                u_lf_inv[0, n, i] = self.u_LF(x_support[i,0], data_points[n, 0], self.denormalize(x_final[0]))
+
+        # Reshape and project onto the POD basis
+        u_lf_pod = np.reshape(u_lf_inv, (dim_data, dim_support))
+        ulf_train = u_lf_pod @ self.basis
+        ulf_train = np.reshape(ulf_train, (1, dim_data, self.n_POD))
+
+        # Assuming self.inputs and self.inputs[0,:,:1] are defined elsewhere in your class
+        t_grid_lstm, re_grid_lstm = np.meshgrid(data_points[:,0], x_final[0])
         
-    def impose_input(self, t_eval, y_obs)
+        # Adjusting the axes order for concatenation
+        t_grid_lstm = np.expand_dims(t_grid_lstm, axis=-1)
+        re_grid_lstm = np.expand_dims(re_grid_lstm, axis=-1)
 
-    def _forward_low_fidelity(self, x_final):
-        
-        if self.POD is None or self.basis is None:
-            return Error
-
-        u_lf_inv = np.zeros((1, self.nt, self.nh))
-        
-        for n in range(self.inputs.shape[1]):       
-            for i in range(self.input2.shape[0]):
-                u_lf_inv[0, n, i] = self.u_LF(self.input2[i], self.inputs[0,n,0], self.denormalize(x_final[0]))
-                
-                
-                
-        u_lf_pod=np.reshape(u_lf_inv,(self.nt,self.nh))
-        ulf_train=u_lf_pod@self.basis
-        ulf_train=np.reshape(ulf_train,(1,self.nt,self.n_POD))
-
-        t_grid_lstm, re_grid_lstm = np.meshgrid(self.inputs[0,:,:1], x_final[0])
-        new_inputs = np.concatenate((t_grid_lstm[:,:,_], re_grid_lstm[:,:,_], ulf_train), axis = 2)
-
-
-        return new_input
-
+        # Concatenate along the last axis
+        #new_inputs = np.concatenate((t_grid_lstm, re_grid_lstm, ulf_train), axis=2)
+        new_inputs = np.concatenate(( re_grid_lstm, ulf_train), axis=2)
+        return new_inputs
 
     def denormalize(self, r: float) -> float:
         """
@@ -202,14 +226,36 @@ class BurgerEquation:
     #         plt.tight_layout()
     #         plt.show()
 
-    def plot_single_contour(self, ax, t_grid, x_grid, data, title, xlabel, ylabel, cmap='plasma', levels=10, colorbar_label='u'):
+    def plot_single_contour(self, ax, t_grid: np.ndarray, x_grid: np.ndarray, data: np.ndarray, title: str, xlabel: str, ylabel: str, cmap: str = 'plasma', levels: int = 10, colorbar_label: str = 'u'):
+        """
+        Plot a single contour plot.
+
+        Parameters:
+        - ax (Axes): Matplotlib axes object to plot on.
+        - t_grid (np.ndarray): Grid for the t-axis.
+        - x_grid (np.ndarray): Grid for the x-axis.
+        - data (np.ndarray): Data to plot.
+        - title (str): Title of the plot.
+        - xlabel (str): Label for the x-axis.
+        - ylabel (str): Label for the y-axis.
+        - cmap (str): Colormap to use.
+        - levels (int or array-like): Levels for contour plot.
+        - colorbar_label (str): Label for the colorbar.
+        """
+        # Plot the contour
         surf = ax.contourf(t_grid, x_grid, data.T, cmap=cmap, levels=levels)
+        
+        # Set axis labels
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12, labelpad=15, rotation=0)
+        
+        # Add colorbar
         cbar = plt.colorbar(surf, ax=ax)
-        cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
+        cbar.ax.set_ylabel(colorbar_label, fontsize=12, labelpad=15, rotation=0)
+        
+        # Set title
         ax.set_title(title, fontsize=14)
-    
+
     def plot_data(self):
         """
         Plot the generated data for both high-fidelity and low-fidelity models.
@@ -262,34 +308,43 @@ class BurgerEquation:
             plt.show()
     
     
-    def plot_error(self, output_pred, basis, ind_test):
-        
-        u_pred = output_pred @ basis.T
-        rel_err_lf = np.linalg.norm(self.u_lf_test - self.u_hf_test)/np.linalg.norm(self.u_hf_test)
-        rel_err_pred = np.linalg.norm(u_pred - self.u_hf_test)/np.linalg.norm(self.u_hf_test)
+    def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray):
+        """
+        Plot the relative and absolute errors for low-fidelity (LF) and multi-fidelity POD (MF-POD) predictions.
 
+        Parameters:
+        - output_pred (np.ndarray): Predicted output from the model.
+        - basis (np.ndarray): Basis matrix used for POD.
+        - ind_test (np.ndarray): Indices of the test cases to plot.
+        """
+        # Project the predicted output onto the high-fidelity space
+        u_pred = output_pred @ basis.T
+        
+        # Calculate relative errors
+        rel_err_lf = np.linalg.norm(self.u_lf_test - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
+        rel_err_pred = np.linalg.norm(u_pred - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
+
+        # Calculate absolute errors
         abs_err_lf = np.abs(self.u_lf_test - self.u_hf_test)
         abs_err_pred = np.abs(u_pred - self.u_hf_test)
+        
+        # Determine the maximum absolute error for consistent color mapping
         max_abs_err = max(abs_err_lf.max(), abs_err_pred.max())
-
         levels = np.linspace(0, max_abs_err, 11)
-       
+        
+        # Generate meshgrid for plotting
         t_grid, x_grid = np.meshgrid(self.t, self.x)
 
         for ind_re in ind_test:
             fig = plt.figure(figsize=(6, 5))
-            plt.suptitle('Re = ' + str(int(self.denormalize(self.re_test[ind_re]))), fontsize = 14)
+            plt.suptitle(f'Re = {int(self.denormalize(self.re_test[ind_re]))}', fontsize=14)
             
             ax = fig.add_subplot(211)
             self.plot_single_contour(ax, t_grid, x_grid, abs_err_lf[ind_re], 'Absolute error for LF', 't', 'x', cmap='bwr', levels=levels, colorbar_label='abs. err.')
 
-            
             ax = fig.add_subplot(212)
             self.plot_single_contour(ax, t_grid, x_grid, abs_err_pred[ind_re], 'Absolute error for MF-POD', 't', 'x', cmap='bwr', levels=levels, colorbar_label='abs. err.')
 
-
-            
-            
             plt.tight_layout()
             plt.show()
        
@@ -333,6 +388,7 @@ class BurgerEquation:
         
 
 class ROM:
+    
     def __init__(self, burger_eq: Any, n_POD: int):
         """
         Initialize the Reduced Order Model (ROM) class.
@@ -398,11 +454,16 @@ class ROM:
 
         return U, Sigma
 
-    def get_basis(self):
+    def get_basis(self) -> np.ndarray:
+        """
+        Retrieve the POD basis.
+        
+        Returns:
+        - basis (np.ndarray): The POD basis.
+        """
         return self.basis
 
-
-    def perform_POD(self):
+    def perform_POD(self) -> None:
         """
         Perform Proper Orthogonal Decomposition (POD) on high-fidelity (HF) and low-fidelity (LF) data.
         
@@ -450,241 +511,253 @@ class ROM:
         
         return self.input_train, self.output_train, self.input_test, self.output_test
         
-
-    def plot_POD_coefficients(self, ind_re: int):
-        """Plot POD coefficients: LF vs HF"""
+    def plot_POD_coefficients(self, ind_re: int) -> None:
+        """
+        Plot POD coefficients: Low-Fidelity (LF) vs High-Fidelity (HF).
+        
+        Parameters:
+        - ind_re (int): Index of the Reynolds number case to plot.
+        """
         fig = plt.figure(figsize=(12, 6))
         plt.subplots_adjust(hspace=0.5)
         fig.suptitle('POD coefficients: LF vs HF', fontsize=14)
         t = self.burger_eq.t
+
         for mode in range(min(6, self.n_POD)):
             ax = fig.add_subplot(231 + mode)
-            plt.plot(t, self.ulf_train[ind_re, :, mode], label='LF', linewidth=2, color='green', linestyle='--')
-            plt.plot(t, self.uhf_train[ind_re, :, mode], label='HF', linewidth=2, color='blue')
-            ax.title.set_text('POD coord. ' + str(mode + 1))
-            plt.xlabel('t')
-            plt.legend()
+            ax.plot(t, self.ulf_train[ind_re, :, mode], label='LF', linewidth=2, color='green', linestyle='--')
+            ax.plot(t, self.uhf_train[ind_re, :, mode], label='HF', linewidth=2, color='blue')
+            ax.set_title('POD coord. ' + str(mode + 1))
+            ax.set_xlabel('t')
+            ax.legend()
         plt.show()
+
+    def plot_POD_output(self, ind_re: int, output_pred: np.ndarray) -> None:
+        """
+        Plot POD output coefficients: predicted vs test data.
         
-    def plot_POD_output(self, ind_re: int, output_pred:np.ndarray=None):
+        Parameters:
+        - ind_re (int): Index of the Reynolds number case to plot.
+        - output_pred (np.ndarray): Predicted output from the model.
         
-        if output_pred is None or output_pred.shape!=self.output_test.shape:
-            raise ValueError(f"Error: output_pred is not properly defined. ")       
-        
+        Raises:
+        - ValueError: If output_pred is not properly defined or does not match the shape of output_test.
+        - ValueError: If output_test is not defined.
+        """
+        if output_pred is None or output_pred.shape != self.output_test.shape:
+            raise ValueError("Error: output_pred is not properly defined.")
+
         if self.output_test is None:
-            raise ValueError(f"Error: output_test not defined, run 'perform_POD' before. ")       
+            raise ValueError("Error: output_test not defined, run 'perform_POD' before.")
 
-         
         fig = plt.figure(figsize=(12, 6))
         plt.subplots_adjust(hspace=0.5)
         fig.suptitle('POD coefficients: LF vs HF', fontsize=14)
         t = self.burger_eq.t
+
         for mode in range(min(6, self.n_POD)):
             ax = fig.add_subplot(231 + mode)
-            plt.plot(t, self.output_test[ind_re, :, mode].reshape(-1), 'b-',label='LF', linewidth=2)
-            plt.plot(t,  output_pred[ind_re, :, mode].reshape(-1), 'r--',label='HF', linewidth=2)
-            ax.title.set_text('POD coord. ' + str(mode + 1))
-            plt.xlabel('t')
-            plt.legend()
+            ax.plot(t, self.output_test[ind_re, :, mode].reshape(-1), 'b-', label='LF', linewidth=2)
+            ax.plot(t, output_pred[ind_re, :, mode].reshape(-1), 'r--', label='HF', linewidth=2)
+            ax.set_title('POD coord. ' + str(mode + 1))
+            ax.set_xlabel('t')
+            ax.legend()
         plt.show()
+
+
+
+
+
+
+# def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray, Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+#     """
+#     Find the elements of a dataset nearest to the ones given.
+    
+#     Parameters:
+#     - datahf: 2D numpy array where datahf[:,1] contains parameter values.
+#     - parameters: 1D numpy array of parameter values to find in datahf.
+#     - t_eval: 2D numpy array of evaluation times.
+#     - Yhf: 1D numpy array of corresponding y values.
+    
+#     Returns:
+#     - nearest_x: 1D numpy array of x values closest to each t_eval.
+#     - y_obs: 1D numpy array of corresponding y values from Yhf.
+#     """
+#     indices = np.where(datahf[:, 1] == parameters[0])[0]
+#     if len(indices) == 0:
+#         raise ValueError(f"No observations related to parameter: {parameters[0]}")
+    
+#     datahf_values = datahf[indices, 0].reshape(-1, 1)
+#     t_eval_values = t_eval.reshape(1, -1)
+#     differences = np.abs(datahf_values - t_eval_values)
+#     closest_indices = np.argmin(differences, axis=0)
+#     nearest_x = datahf[indices[closest_indices], 0]
+#     y_obs = Yhf[indices[closest_indices]]
+    
+#     return nearest_x, y_obs
+
+
+# def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
+#     """
+#     Calculate the covariance matrix for the likelihood.
+    
+#     Parameters:
+#     - sigma: Standard deviation for the likelihood.
+#     - t_eval: 2D numpy array of evaluation times.
+    
+#     Returns:
+#     - cov_likelihood: 2D numpy array representing the covariance matrix.
+#     """
+#     return sigma ** 2 * np.eye(t_eval.shape[0])
+# # LSTM VERSION 
+# def run_simulation( datahf_x: np.ndarray,
+#     datahf: np.ndarray, mean_prior: np.ndarray, cov_prior: np.ndarray, Yhf: np.ndarray, 
+#     sigma_noise: List[float], n_data: List[int], parameters: np.ndarray, sigma: np.ndarray, 
+#     rwmh_scaling: np.ndarray, rwmh_cov: np.ndarray, rwmh_adaptive: bool, 
+#     iterations: int, burnin: int, n_chains: int, final_model, algo: str, forward_low_fidelity: Optional[Callable] = None
+# ) -> Tuple[np.ndarray, np.ndarray]:
+#     """
+#     Run a simulation to estimate parameters and calculate errors.
+    
+#     Parameters:
+#     - datahf: 2D numpy array containing data.
+#     - mean_prior: 1D numpy array for the mean of the prior.
+#     - cov_prior: 2D numpy array for the covariance of the prior.
+#     - Yhf: 1D numpy array of observed values.
+#     - sigma_noise: List of noise levels.
+#     - n_data: List of number of data points.
+#     - parameters: 1D numpy array of parameters.
+#     - sigma: 1D numpy array of standard deviations for the likelihood.
+#     - rwmh_scaling: 1D numpy array of scaling factors for the RWMH algorithm.
+#     - rwmh_cov: 2D numpy array for the RWMH covariance.
+#     - rwmh_adaptive: Boolean indicating if RWMH is adaptive.
+#     - iterations: Integer for the number of iterations.
+#     - burnin: Integer for the burn-in period.
+#     - n_chains: Integer for the number of chains.
+#     - final_model: The model object with the param_inverse method.
+#     - algo: String indicating the algorithm to use.
+    
+#     Returns:
+#     - best_estimate: The best parameter estimate.
+#     - best_error: The error corresponding to the best estimate.
+#     """
+    
+#     # Initialize error and estimate arrays
+#     error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
+#     error = np.zeros(error_shape)
+#     estimates = np.zeros(error_shape)
+    
+#     # Iterate over all combinations of parameters using itertools.product
+#     for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
+#         t_eval = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
+#         nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest x values and observations
+#         cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
         
-
-
-
-
-
-
-def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray, Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Find the elements of a dataset nearest to the ones given.
+#         # Perform parameter estimation and calculate error
+#         estimates[i, k, t, j], error[i, k, t, j] = final_model.param_inverse(
+#             mean_prior, datahf_x, t_eval, cov_prior=cov_prior, rmwh_scaling=r, 
+#             cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
+#             x_real=parameters, number_chains=n_chains, N=iterations, 
+#             burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
+#             rwmh_adaptive=rwmh_adaptive, algo=algo, forward_low_fidelity=_forward_low_fidelity
+#         )
     
-    Parameters:
-    - datahf: 2D numpy array where datahf[:,1] contains parameter values.
-    - parameters: 1D numpy array of parameter values to find in datahf.
-    - t_eval: 2D numpy array of evaluation times.
-    - Yhf: 1D numpy array of corresponding y values.
+#     # Identify the index of the minimum error
+#     smallest_index = np.unravel_index(np.argmin(error), error.shape)
+#     best_estimate = estimates[smallest_index]
+#     best_error = error[smallest_index]
     
-    Returns:
-    - nearest_x: 1D numpy array of x values closest to each t_eval.
-    - y_obs: 1D numpy array of corresponding y values from Yhf.
-    """
-    indices = np.where(datahf[:, 1] == parameters[0])[0]
-    if len(indices) == 0:
-        raise ValueError(f"No observations related to parameter: {parameters[0]}")
-    
-    datahf_values = datahf[indices, 0].reshape(-1, 1)
-    t_eval_values = t_eval.reshape(1, -1)
-    differences = np.abs(datahf_values - t_eval_values)
-    closest_indices = np.argmin(differences, axis=0)
-    nearest_x = datahf[indices[closest_indices], 0]
-    y_obs = Yhf[indices[closest_indices]]
-    
-    return nearest_x, y_obs
+#     # Print the best parameters
+#     print(f"The best estimate is given by: sigma_noise={sigma_noise[smallest_index[0]]}, "
+#           f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
+#           f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
 
+#     return best_estimate, best_error
 
-def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
-    """
-    Calculate the covariance matrix for the likelihood.
-    
-    Parameters:
-    - sigma: Standard deviation for the likelihood.
-    - t_eval: 2D numpy array of evaluation times.
-    
-    Returns:
-    - cov_likelihood: 2D numpy array representing the covariance matrix.
-    """
-    return sigma ** 2 * np.eye(t_eval.shape[0])
-# LSTM VERSION 
-def run_simulation( class_model, # type?
-    datahf: np.ndarray, mean_prior: np.ndarray, cov_prior: np.ndarray, Yhf: np.ndarray, 
-    sigma_noise: List[float], n_data: List[int], parameters: np.ndarray, sigma: np.ndarray, 
-    rwmh_scaling: np.ndarray, rwmh_cov: np.ndarray, rwmh_adaptive: bool, 
-    iterations: int, burnin: int, n_chains: int, final_model, algo: str
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Run a simulation to estimate parameters and calculate errors.
-    
-    Parameters:
-    - datahf: 2D numpy array containing data.
-    - mean_prior: 1D numpy array for the mean of the prior.
-    - cov_prior: 2D numpy array for the covariance of the prior.
-    - Yhf: 1D numpy array of observed values.
-    - sigma_noise: List of noise levels.
-    - n_data: List of number of data points.
-    - parameters: 1D numpy array of parameters.
-    - sigma: 1D numpy array of standard deviations for the likelihood.
-    - rwmh_scaling: 1D numpy array of scaling factors for the RWMH algorithm.
-    - rwmh_cov: 2D numpy array for the RWMH covariance.
-    - rwmh_adaptive: Boolean indicating if RWMH is adaptive.
-    - iterations: Integer for the number of iterations.
-    - burnin: Integer for the burn-in period.
-    - n_chains: Integer for the number of chains.
-    - final_model: The model object with the param_inverse method.
-    - algo: String indicating the algorithm to use.
-    
-    Returns:
-    - best_estimate: The best parameter estimate.
-    - best_error: The error corresponding to the best estimate.
-    """
-    
-    # Initialize error and estimate arrays
-    error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
-    error = np.zeros(error_shape)
-    estimates = np.zeros(error_shape)
-    
-    # Iterate over all combinations of parameters using itertools.product
-    for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
-        t_eval = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
-        nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest x values and observations
-        cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
-        
-        class_model.impose_input(t_eval, y_obs)
+# def run_simulation_cuqi(
+#     data: dict,
+#     mean_prior: np.ndarray,
+#     x_real: np.ndarray,
+#     N: int,
+#     burn_in: int,
+#     cov_prior: np.ndarray,
+#     sd_noise: list,
+#     adapt: bool,
+#     proposal_sd: list,
+#     number_chains: int,
+#     algo: str,
+#     x_data: np.ndarray,
+#     n_data: list,
+#     final_model,
+#     parallel: bool
+# ) -> tuple:
+#     """
+#     Run a CUQI simulation to estimate parameters and compute error.
 
-        # Perform parameter estimation and calculate error
-        estimates[i, k, t, j], error[i, k, t, j] = final_model.param_inverse(
-            mean_prior, t_eval, cov_prior=cov_prior, rmwh_scaling=r, 
-            cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-            x_real=parameters, number_chains=n_chains, N=iterations, 
-            burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, algo=algo
-        )
-    
-    # Identify the index of the minimum error
-    smallest_index = np.unravel_index(np.argmin(error), error.shape)
-    best_estimate = estimates[smallest_index]
-    best_error = error[smallest_index]
-    
-    # Print the best parameters
-    print(f"The best estimate is given by: sigma_noise={sigma_noise[smallest_index[0]]}, "
-          f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
-          f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
+#     Args:
+#         data (dict): Dictionary containing high-fidelity data (keys: "xhf" and "Yhf").
+#         mean_prior (np.ndarray): Prior mean vector.
+#         x_real (np.ndarray): Real x values.
+#         N (int): Number of samples.
+#         burn_in (int): Number of burn-in samples.
+#         cov_prior (np.ndarray): Prior covariance matrix.
+#         sd_noise (list): List of noise standard deviations to evaluate.
+#         adapt (bool): Whether to use adaptation in the algorithm.
+#         proposal_sd (list): List of proposal standard deviations to evaluate.
+#         number_chains (int): Number of MCMC chains.
+#         algo (str): Algorithm to use for MCMC.
+#         x_data (np.ndarray): Initial evaluation times.
+#         n_data (list): List of data sizes to evaluate.
+#         final_model: Final model object with inverse_cuqi method.
+#         parallel (bool): Whether to run MCMC chains in parallel.
 
-    return best_estimate, best_error
+#     Returns:
+#         tuple: Best estimate and best error found during the simulation.
+#     """
 
-def run_simulation_cuqi(
-    data: dict,
-    mean_prior: np.ndarray,
-    x_real: np.ndarray,
-    N: int,
-    burn_in: int,
-    cov_prior: np.ndarray,
-    sd_noise: list,
-    adapt: bool,
-    proposal_sd: list,
-    number_chains: int,
-    algo: str,
-    x_data: np.ndarray,
-    n_data: list,
-    final_model,
-    parallel: bool
-) -> tuple:
-    """
-    Run a CUQI simulation to estimate parameters and compute error.
+#     # Initialize estimates and error arrays
+#     estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
+#     error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
 
-    Args:
-        data (dict): Dictionary containing high-fidelity data (keys: "xhf" and "Yhf").
-        mean_prior (np.ndarray): Prior mean vector.
-        x_real (np.ndarray): Real x values.
-        N (int): Number of samples.
-        burn_in (int): Number of burn-in samples.
-        cov_prior (np.ndarray): Prior covariance matrix.
-        sd_noise (list): List of noise standard deviations to evaluate.
-        adapt (bool): Whether to use adaptation in the algorithm.
-        proposal_sd (list): List of proposal standard deviations to evaluate.
-        number_chains (int): Number of MCMC chains.
-        algo (str): Algorithm to use for MCMC.
-        x_data (np.ndarray): Initial evaluation times.
-        n_data (list): List of data sizes to evaluate.
-        final_model: Final model object with inverse_cuqi method.
-        parallel (bool): Whether to run MCMC chains in parallel.
-
-    Returns:
-        tuple: Best estimate and best error found during the simulation.
-    """
-
-    # Initialize estimates and error arrays
-    estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-
-    # Iterate over noise levels
-    for i, noise in enumerate(sd_noise):
-        # Iterate over number of data points
-        for k, n in enumerate(n_data):
-            # Generate evaluation times
-            x_data = np.linspace(0., 5., n).reshape(-1, 1)
-            nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"])
+#     # Iterate over noise levels
+#     for i, noise in enumerate(sd_noise):
+#         # Iterate over number of data points
+#         for k, n in enumerate(n_data):
+#             # Generate evaluation times
+#             x_data = np.linspace(0., 5., n).reshape(-1, 1)
+#             nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"])
             
-            # Iterate over proposal standard deviations
-            for t, s in enumerate(proposal_sd):
+#             # Iterate over proposal standard deviations
+#             for t, s in enumerate(proposal_sd):
 
-                # Perform parameter estimation and calculate error
-                estimates[i, k, t], error[i, k, t] = final_model.inverse_cuqi(
-                    mean_prior=mean_prior,
-                    x_real=x_real,
-                    y_obs=y_obs,
-                    N=N,
-                    burn_in=burn_in,
-                    cov_prior=cov_prior,
-                    sd_noise=noise,  
-                    adapt=adapt,
-                    scale=s,
-                    proposal_sd=s,
-                    number_chains=number_chains,
-                    algo=algo,
-                    x_data=x_data,
-                    parallel=parallel
-                )
+#                 # Perform parameter estimation and calculate error
+#                 estimates[i, k, t], error[i, k, t] = final_model.inverse_cuqi(
+#                     mean_prior=mean_prior,
+#                     x_real=x_real,
+#                     y_obs=y_obs,
+#                     N=N,
+#                     burn_in=burn_in,
+#                     cov_prior=cov_prior,
+#                     sd_noise=noise,  
+#                     adapt=adapt,
+#                     scale=s,
+#                     proposal_sd=s,
+#                     number_chains=number_chains,
+#                     algo=algo,
+#                     x_data=x_data,
+#                     parallel=parallel
+#                 )
                 
-    # Find the smallest error and corresponding indices
-    smallest_index = np.unravel_index(np.argmin(error), error.shape)
-    best_estimate = estimates[smallest_index]
-    best_error = error[smallest_index]
+#     # Find the smallest error and corresponding indices
+#     smallest_index = np.unravel_index(np.argmin(error), error.shape)
+#     best_estimate = estimates[smallest_index]
+#     best_error = error[smallest_index]
     
-    # Print the best parameters
-    print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
-          f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
+#     # Print the best parameters
+#     print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
+#           f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
 
-    return best_estimate, best_error
+#     return best_estimate, best_error
 
 
 
