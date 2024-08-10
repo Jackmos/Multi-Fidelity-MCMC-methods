@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import arviz as az
 from typing import Any, Tuple, List
 import ray
+
 import logging
 import tensorflow as tf
 from tinyDA import get_MAP, GaussianRandomWalk, AdaptiveMetropolis, CrankNicolson, DREAMZ, MLDA, sample, to_inference_data
@@ -20,9 +21,11 @@ def MCMC(
     rmwh_scaling: float = 0.1, 
     period: int = 100, 
     t0: int = 0, 
+    subsampling_rate:Any=1,
     rwmh_adaptive: bool = False, 
     algo: str = "MH", 
-    dim: int = 0
+    dim: int = 0,
+    force_sequential: bool = False
 ) -> np.ndarray:
     """
     Perform MCMC sampling.
@@ -37,10 +40,11 @@ def MCMC(
         rmwh_scaling (float, optional): Scaling factor for RW-MH. Defaults to 0.1.
         period (int, optional): Adaptation period. Defaults to 100.
         t0 (int, optional): Initial time step. Defaults to 0.
+        subsampling_rate(List or int,optional): The subsampling rate(s). If running single-level MCMC, this parameter is ignored
         rwmh_adaptive (bool, optional): Whether to use adaptive RW-MH. Defaults to False.
         algo (str, optional): MCMC algorithm to use. Defaults to "MH".
         dim (int, optional): Dimensionality of the problem. Defaults to 0.
-
+        force_sequential (bool, optional): impose sequential approach or let parallel if ray included
     Returns:
         np.ndarray: Array of estimated parameter means.
     """
@@ -63,18 +67,139 @@ def MCMC(
     else:
         raise ValueError("Unknown algorithm %s" % algo)
     
-    my_chains = sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
+    my_chains = sample(my_posterior, my_proposal, iterations=N, n_chains=n, subsampling_rate=subsampling_rate, force_sequential=force_sequential, initial_parameters=MAP)
+
+    
     idata = to_inference_data(my_chains, burnin=burnin)
     estimates = np.array(az.summary(idata)['mean'])
     print(f"Estimated values are {estimates}")
 
     if diagnostic:
+
         print(az.summary(idata))
+
         az.plot_trace(idata)
-        print("Autocorrelation...")
+        print("----  Autocorrelation  ----")
         az.plot_autocorr(idata)
+        print("----  Effective Sample Size  ----")
+        az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
+        print("----  Effective Sample Size per iteration  ----")        
+        az.plot_ess(idata,kind='local')        
+        # print("----  Pair Plots  ----")
+        # az.plot_pair(idata)
+        print("----  Rank Plots  ----")
+        az.plot_rank(idata)
+
 
     return estimates
+
+# def MCMC(
+#     my_posterior: List[Any], 
+#     N: int, 
+#     burnin: int, 
+#     n: int = 1, 
+#     diagnostic: bool = True,
+#     rwmh_cov: np.ndarray = None, 
+#     rmwh_scaling: float = 0.1, 
+#     period: int = 100, 
+#     t0: int = 0, 
+#     subsampling_rate:Any=1,
+#     rwmh_adaptive: bool = False, 
+#     algo: str = "MH", 
+#     dim: int = 0,
+#     force_sequential: bool = False
+# ) -> np.ndarray:
+#     """
+#     Perform MCMC sampling.
+
+#     Args:
+#         my_posterior (List[Any]): List of posterior distributions.
+#         N (int): Number of samples to draw.
+#         burnin (int): Number of burn-in samples to discard.
+#         n (int, optional): Number of chains. Defaults to 1.
+#         diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
+#         rwmh_cov (np.ndarray, optional): Covariance matrix for RW-MH. Defaults to None.
+#         rmwh_scaling (float, optional): Scaling factor for RW-MH. Defaults to 0.1.
+#         period (int, optional): Adaptation period. Defaults to 100.
+#         t0 (int, optional): Initial time step. Defaults to 0.
+#         subsampling_rate(List or int,optional): The subsampling rate(s). If running single-level MCMC, this parameter is ignored
+#         rwmh_adaptive (bool, optional): Whether to use adaptive RW-MH. Defaults to False.
+#         algo (str, optional): MCMC algorithm to use. Defaults to "MH".
+#         dim (int, optional): Dimensionality of the problem. Defaults to 0.
+#         force_sequential (bool, optional): impose sequential approach or let parallel if ray included
+#     Returns:
+#         np.ndarray: Array of estimated parameter means.
+#     """
+#     MAP = get_MAP(my_posterior) if dim != 1 else None
+
+#     if algo == "MH":
+#         my_proposal = GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+#     elif algo == "AM":
+#         my_proposal = AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive, period=period, t0=t0)
+#     elif algo == "CN":
+#         my_proposal = CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive, period=period)
+#     elif algo == "DREAMZ":
+#         my_proposal = DREAMZ(M0=10 * dim, adaptive=rwmh_adaptive, period=period)
+#     elif algo == "MLDA":
+#         my_proposal = MLDA(
+#             posteriors=my_posterior, subsampling_rates=[5, 5],
+#             adaptive_error_model='state-independent', initial_parameters=MAP,
+#             store_coarse_chain=True, proposal=AdaptiveMetropolis(C0=rwmh_cov)
+#         )
+#     else:
+#         raise ValueError("Unknown algorithm %s" % algo)
+    
+#     if force_sequential:
+#         my_chains = sample(my_posterior, my_proposal, iterations=N, n_chains=n, subsampling_rate=subsampling_rate, force_sequential=force_sequential, initial_parameters=MAP)
+#     else: 
+#         logging.getLogger('tensorflow').setLevel(logging.ERROR)
+#         tf.get_logger().setLevel('ERROR')
+#         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
+#         my_chains=parallel_sampling.remote(my_posterior, my_proposal, N, n, subsampling_rate, MAP)
+#         my_chains = ray.get(my_chains)
+#         ray.shutdown()
+    
+#     idata = to_inference_data(my_chains, burnin=burnin)
+#     estimates = np.array(az.summary(idata)['mean'])
+#     print(f"Estimated values are {estimates}")
+
+#     if diagnostic:
+
+#         print(az.summary(idata))
+
+#         az.plot_trace(idata)
+#         print("----  Autocorrelation  ----")
+#         az.plot_autocorr(idata)
+#         print("----  Effective Sample Size  ----")
+#         az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
+#         print("----  Effective Sample Size per iteration  ----")        
+#         az.plot_ess(idata,kind='local')        
+#         print("----  $\hat{R} $ ----")
+#         az.plot_rhat(idata)
+#         print("----  Pair Plots  ----")
+#         az.plot_pair(idata)
+#         print("----  Rank Plots  ----")
+#         az.plot_rank(idata)
+
+
+#     return estimates
+
+
+
+
+# # necessary to have access to Structure
+# @ray.remote
+# def parallel_sampling(
+#     my_posterior: List[Any], 
+#     my_proposal,
+#     N: int, 
+#     n: int = 1, 
+#     subsampling_rate:Any=1,
+#     MAP=None
+# ) :
+
+#     return sample(my_posterior, my_proposal, iterations=N, n_chains=n, subsampling_rate=subsampling_rate, force_sequential=False, initial_parameters=MAP)
+
 
 
 def MCMC_cuqi(

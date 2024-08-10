@@ -1,0 +1,1 @@
+{"lay": 2, "nodes": 32, "nodes_dense": 32, "lr": {"initial_learning_rate": 0.001, "decay_steps": 5000, "decay_rate": 0.9, "type": "ExponentialDecay"}, "opt": "Adam", "sequence_freq": 3, "sequence_length": 150, "lay_dense": 1, "epochs": 5, "patience": 100, "dropout": 0.2, "l2_reg": 0.001, "sched": true}

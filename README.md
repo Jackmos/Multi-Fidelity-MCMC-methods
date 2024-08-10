@@ -1,28 +1,22 @@
 # Multifidelity MCMC for parameter estimation 
 
 Politecnico di Milano APSC Course project
-# Overview
-The considered dataset emulates the one used in the paper  "Multi fidelity reduced-order surrogate modeling".
 
-Each folder contains: 
+# Overview 
 
-`2_step_NN\` - hyperparameters optimization and training of 2 steps Neural Network 
-- `ann_functions` - collection of the functions used to train the NN
-- `HPO_2steps` - hyperparameters research
-- `NN_1param` - Neural Network model
-- `nnhf` - HF surrogate
-- `nnlf` - LF surrogate
-- 'finale\' - contains some of the outputs created which have relevance
+Each folder but utils contains: 
+- 'data_collection' - file which contains a class to define the properties of the considered test case
+- 'module_utils' - file contatining some case dependent functions necessary to define the Neural Network or the inverse problem 
 
-`3_step_NN\` - hyperparameters optimization and training of 3 steps Neural Network 
+Folder 'utils\' is made of functions used by all the analyzed cases, both for the complete definition of Multifidelity Neural Networks and BIPs (Bayesian Inverse Problems). For convenience, the functions are splitted in 3 files
+- 'Structure'
+- 'Helpers'
+- 'BIP_functions'
 
-`Intermediate\` - hyperparameters optimization and training of Intermediate Neural Network 
+# Project Explanation
 
-The considered cases are
-`Diffusion\`
-`Time_variation\`
-`Multiparameter\`
-`Multiparameter_t\`
+## Usage
 
-`data_analysis` - short analysis of the dataset
+## Dependences
+
 ## Environment

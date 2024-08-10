@@ -307,9 +307,11 @@ def getModel(params,num_inputs,name,num_outputs):
         inputs = Input(shape=(None, num_inputs))
         if params["sched"] is True:
             params['lr'] = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=params['lr'],
+            initial_learning_rate=params['lr_init'],
             decay_steps=5000,
             decay_rate=0.9)
+        else:
+            params['lr']=params['lr_init']
 
         a = LSTM(params['nodes'], return_sequences=True, kernel_regularizer=l2(params['l2_reg']))(inputs)
                 # Adding a Fourier Layer

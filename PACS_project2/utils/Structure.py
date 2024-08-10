@@ -5,6 +5,7 @@ from numpy import newaxis as _
 import copy
 import pickle
 import time
+from keras.models import load_model
 from typing import Callable, Tuple, Any, List, Optional, Union, Dict
 from contextlib import contextmanager
 from module_utils import *
@@ -65,7 +66,8 @@ class NetworkFactory:
                       n: int = 10,
                       train: bool = True,
                       do_HPO: bool = False,
-                      verbose: bool = False) -> 'INetwork':
+                      verbose: bool = False,
+                      device: str = '/CPU:0') -> 'INetwork':
         """
         Build and return a network of the specified type.
 
@@ -80,6 +82,7 @@ class NetworkFactory:
         - train (bool): Flag indicating whether to train the network.
         - do_HPO (bool): Flag indicating whether to perform hyperparameter optimization.
         - verbose (bool): Flag indicating whether to print verbose output.
+        - device (str): denotes GPU or CPU 
 
         Returns:
         - INetwork: The created network object.
@@ -96,26 +99,26 @@ class NetworkFactory:
             match = re.match(r'(\d+)STEP', network_type, re.IGNORECASE)
             if match:
                 n_step = int(match.group(1))
-                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose)
+                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device)
             else:
                 raise ValueError(f"Invalid network type: {network_type}")
             
         # Map the enum to the respective network class constructors.
         if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN, NetworkType.HFPER}:
-            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose)
+            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose,device=device)
         
         elif  network_type_enum ==  NetworkType["STEP"]: #network_type_enum == NetworkType.step:
             # Ensure data_train and output_train are lists for MultiFidelity networks.
             if not (isinstance(data_train, list) and isinstance(output_train, list)):
                 raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
             
-            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose)
+            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device)
         
         elif network_type_enum == NetworkType.INTER:
-            return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose)
+            return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose, device=device)
         
         elif network_type_enum == NetworkType.LSTM:
-            return LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose)
+            return LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose, device=device)
 
         raise ValueError(f"Invalid network type: {network_type}")
 
@@ -987,9 +990,10 @@ class LSTM_network(INetwork):
         callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self.params['patience'], restore_best_weights=True)
         tf.keras.utils.set_random_seed(29)
         tf.config.experimental.enable_op_determinism() # for reproducibility
-        with tf.device(device):
+        # with tf.device(device):
 
-            self.hist = self.model.fit(self.input_train_seq, self.output_train_seq, epochs=epoch, verbose = self.verbose, callbacks=[callback])
+        #     self.hist = self.model.fit(self.input_train_seq, self.output_train_seq, epochs=epoch, verbose = self.verbose, callbacks=[callback])
+        self.hist = self.model.fit(self.input_train_seq, self.output_train_seq, epochs=epoch, verbose = self.verbose, callbacks=[callback])
 
         return self.hist
 
@@ -1059,53 +1063,23 @@ class LSTM_network(INetwork):
 
         return test_mse, r2
 
-    def save(self, path: str, identifier: str) -> None:
-        """
-        Save the LSTM model and the class instance.
-
-        Args:
-            path (str): Directory path to save the model and instance.
-            identifier (str): Identifier for the saved files.
-        """
-        # Ensure the directory exists
-        os.makedirs(path, exist_ok=True)
-
-        # Save the Keras model separately
-        model_path = os.path.join(path, f'lstm_model_{identifier}.h5')
-        self.model.save(model_path)
-
-        # Save the class instance excluding the Keras model
-        temp_model = self.model
-        self.model = None
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'wb') as f:
-            pickle.dump(self, f)
-
-        # Restore the model attribute
-        self.model = temp_model
-
-    @classmethod
-    def load(cls, path: str, identifier: str) -> 'LSTM_network':
-        """
-        Load the LSTM model and the class instance.
-
-        Args:
-            path (str): Directory path from which to load the model and instance.
-            identifier (str): Identifier for the saved files.
-
-        Returns:
-            LSTM_network: The loaded LSTM_network instance.
-        """
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
-            instance = pickle.load(f)
-
-        model_path = os.path.join(path, f'lstm_model_{identifier}.h5')
-        custom_objects = {
-            'mse': MeanSquaredError()  # Add any custom objects required by the model
-        }
-        instance.model = load_model(model_path, custom_objects=custom_objects)
-
-        return instance
-
+    def save(self, file_path: str) -> None: 
+        """ 
+        Save the trained LSTM model to a file. 
+        Args: 
+            file_path (str): The path where the model will be saved. 
+        """ 
+        self.model.save(file_path) 
+        print(f"Model saved to {file_path}") 
+ 
+    def load(self, file_path: str) -> None: 
+        """ 
+        Load a trained LSTM model from a file. 
+        Args: 
+            file_path (str): The path from where the model will be loaded. 
+        """ 
+        self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
+        print(f"Model loaded from {file_path}")
 
     def _sliding_windows(self, data_input, data_output, seq_length, freq=1):
         """
@@ -1652,7 +1626,6 @@ class Intermediate(INetwork):
 #             dict: Best hyperparameters.
 #         """
 #         pass  # Implement hyperparameter optimization logic here
-
 
 
 
