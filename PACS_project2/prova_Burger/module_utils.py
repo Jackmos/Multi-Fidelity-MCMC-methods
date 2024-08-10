@@ -4,66 +4,36 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Input, concatenate, LSTM, Dropout
 from tensorflow.keras.optimizers import Adam,Nadam,Adamax
 import tensorflow as tf
-import arviz
 from typing import Callable, Tuple, Any, List, Optional, Union, Dict
 
-from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
-from hyperopt.pyll.stochastic import sample
-from hyperopt.pyll.base import scope
 from sklearn.model_selection import KFold
 import numpy as np
 from matplotlib import pyplot as plt
 from time import perf_counter
-import sys
-import os
-import warnings
+
 from itertools import product
-
-from cuqi.distribution import Uniform, Gaussian,JointDistribution, Beta
-from cuqi.sampler import MH,NUTS, Gibbs, CWMH, pCN
-from cuqi.model import Model as CuqiModel
-from cuqi.geometry import Continuous1D, Discrete
-#from cuqi.diagnostics import Geweke
-import tinyDA as tda
-from scipy.stats import multivariate_normal,beta
-import arviz as az
-import time 
+#from cuqi.model import Model as CuqiModel
 
 
+# Define custom types for better readability
+ParamsType = Dict[str, Union[int, float, str, Any]]
+OutputType = Union[Model, List[Model]]
 
-# def compute_randomized_SVD(S: np.ndarray, N_POD: int, N_h: int, n_channels: int) -> tuple[np.ndarray, np.ndarray]:
-#     """
-#     Compute the randomized Singular Value Decomposition (SVD) for the input matrix S.
 
-#     Parameters:
-#     - S (np.ndarray): The input matrix of shape (n_channels * N_h, m), where m is the number of columns.
-#     - N_POD (int): The number of principal components to compute.
-#     - N_h (int): The number of spatial grid points.
-#     - n_channels (int): The number of channels.
-
-#     Returns:
-#     - tuple[np.ndarray, np.ndarray]: A tuple containing the left singular vectors (U) and the singular values (Sigma).
-#       - U (np.ndarray): The matrix of left singular vectors of shape (n_channels * N_h, N_POD).
-#       - Sigma (np.ndarray): The array of singular values.
-#     """
-#     U = np.zeros((n_channels * N_h, N_POD))
-#     Sigma = np.zeros((n_channels, N_POD))  # Initializing Sigma to store singular values for each channel
-
-#     for i in range(n_channels):
-#         start_idx = i * N_h
-#         end_idx = (i + 1) * N_h
-#         U[start_idx:end_idx], sigma, _ = extmath.randomized_svd(
-#             S[start_idx:end_idx, :],
-#             n_components=N_POD,
-#             transpose=False,
-#             flip_sign=False,
-#             random_state=123
-#         )
-#         Sigma[i, :] = sigma
-
-#     return U, Sigma
-    
 def custom_activation(x):
+    """
+    Custom activation function that modifies the input tensor `x`.
+
+    This activation function adds the square of the sine of `x` to the original input `x`.
+    The function can introduce non-linearity in the model in a way that might help capture
+    more complex patterns in the data.
+
+    Args:
+        x: A tensor or variable representing the input to the activation function.
+
+    Returns:
+        A tensor of the same shape as `x`, with the activation applied.
+    """
     return x + K.square(K.sin(x))
 
 def normalization(x: float, xmax: float, xmin: float) -> float:
@@ -94,306 +64,174 @@ def denormalization(x: float, xmax: float, xmin: float) -> float:
     """
     return x * (xmax - xmin) + xmin
 
-# def MCMC(my_posterior,N, burnin, n=1, diagnostic=True,rwmh_cov=None,rmwh_scaling=0.1, period=100, t0=0, rwmh_adaptive=False,algo="MH",dim=0):
-#     #print("check 1")
-#     # if(dim!=1):
-#     #      MAP = tda.get_MAP(my_posterior)
-#     # else:
-#     #     MAP=None
-
-#     MAP = tda.get_MAP(my_posterior)
-
-#     #if(adaptive_MH is True):
-#    # print("check2")
-#     if algo == "MH":
-#         my_proposal = tda.GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive) # gamma= adaptivity coefficient
-#     elif algo=="AM":
-#         # adaptive metropolis
-#         my_proposal=tda.AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive,period=period, t0=t0)   # sd am scaling parameter, gamma
-#     elif algo=="CN":
-#         # preconditioned Crank Nicolson
-#         my_proposal=tda.CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive,period=period)
-#     elif algo=="DREAMZ":
-#         my_proposal=tda.DREAMZ(M0=10*dim,adaptive=rwmh_adaptive,period=period)
-#     else: 
-#         raise ValueError("Unknown algorithm %s"%algo)
     
-#     my_chains = tda.sample(my_posterior, my_proposal, iterations=N, n_chains=n, force_sequential=True, initial_parameters=MAP)
-#     idata = tda.to_inference_data(my_chains, burnin=burnin)
-#     estimates=np.array(az.summary(idata)['mean'])
-#     print(f"estimated values are {estimates}")
-#     if (diagnostic is True):
-#         print(az.summary(idata))
-#         az.plot_trace(idata)
-#         print("Autocorrelation...")
-#         az.plot_autocorr(idata)
-        
+# Custom Loss Function
+def custom_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+    """
+    Custom loss function that ignores certain values in y_pred.
+
+    Args:
+        y_true (tf.Tensor): True values.
+        y_pred (tf.Tensor): Predicted values.
+
+    Returns:
+        tf.Tensor: Computed loss.
+    """
+    # Identify indices where y_pred is not equal to -10
+    goodind = tf.not_equal(y_pred, -10.0)
     
-#     return estimates
-
-
-
-# def MCMC_cuqi(y,x,observation, N, burn_in, n=1, diagnostic=True,algo="MH",adapt=False, scale=0.3):
+    # Mask y_pred and y_true based on the identified indices
+    y_pred_loss = tf.boolean_mask(y_pred, goodind)
+    y_pred_true = tf.boolean_mask(y_true, goodind)
     
-#     x_init=np.random.rand(observation.shape[0],n)
-        
-#     estimates=np.empty((observation.shape[0],0))
-#     ESSs=np.empty((observation.shape[0],0))
-#     #Geweke=np.empty((x_init.shape[0],0))
-#     #Rhat=np.empty((observation.shape[0],0))
-
-#     chains=np.empty((0,observation.shape[0],N-burn_in))
-#     #chains=np.empty((observation.shape[0],N-burn_in))
-#     post=np.empty((observation.shape[0],0))
-#     posterior=JointDistribution(y,x)(y=observation)
-
-#     for i in range(n):
-        
-#         if algo=="NUTS":
-#             # Hamiltonian Monte Carlo
-#             sampler=NUTS(posterior,x0=x_init[:,i])
-#         elif algo=="MH":
-#             # Metropolis Hastings
-#             if adapt is False:
-#                 sampler=MH(posterior,x0=x_init[:,i],scale=scale)
-#             else:
-#                 sampler=MH(posterior,x0=x_init[:,i])
-
-#         # elif algo=="Gibbs":
-#         #     # GIbbs Sampler
-#         #     sampler=
-#         # elif algo=="CWMH":
-#         #     sampler=
-#         elif algo=="pCN":
-#             # preconditioned Crank Nicholson
-#             sampler=pCN(posterior,x0=x_init[:,i])
-#         else:
-#             raise ValueError("Unknown algorithm %s"%algo)
-#         if adapt is True:
-#             samples=sampler.sample_adapt(N-burn_in,burn_in)
-#         else:
-#             samples=sampler.sample(N-burn_in,burn_in)
-
-#         estimates=np.column_stack((estimates,samples.mean()[:, np.newaxis]))
-#        # ESSs=np.column_stack((ESSs,samples.compute_ess()[:, np.newaxis]))
-#   #      Rhat=np.column_stack((Rhat,samples.compute_rhat()[:, np.newaxis]))
-#         #print(Geweke)
-#         #Geweke=np.column_stack((Geweke,samples.diagnostics()[:, np.newaxis][0]))
-#                 # chains=np.concatenate(chains, samplesMH_LF.samples)
-#         #printsamples.shape)
-#         chains = np.concatenate((chains, np.expand_dims(samples.samples, axis=0)), axis=0)
-#         post=np.concatenate((post,samples.samples),axis=1)
-
-
-#         print(                f"********************  # Mean values = {estimates.mean(axis=1)}  ********************"
-#                 )
-#     print(chains.shape)
-#     for l in range(chains.shape[1]):
-#         plt.figure(figsize=(10, 4))
-
-#         for i in range(chains.shape[0]):
-#             plt.plot(chains[i, l,:])
-
-#         plt.xlabel('Sample')
-#         plt.ylabel('Value')
-#         plt.title(f'Trace Plot variable {l}')
-#         plt.legend()
-#         plt.show()
-        
-#     if(diagnostic is True):
-#         if(n==1):
-#             samples.plot_trace()
-#             samples.plot_autocorrelation()
-#         else:
-#             num_bins=20
-#             plt.figure()
-#             for num in range(post.shape[0]):        
-                
-#                 bin_edges = np.linspace(np.min(post[num,:]), np.max(post[num,:]), num_bins + 1)
-#                 hist, _ = np.histogram(post, bins=bin_edges)
-#                 hist=hist/post.shape[1]
-#                 bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-#                 print(hist)
-#                 plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
-
-#                 plt.xlabel('Value')
-#                 plt.ylabel('Probability')
-#                 plt.title('Distribution')
-#                 plt.legend()
-#                 plt.show()
-                
-#             autocov=arviz.autocov(chains[:,0,:])
-#             ess=arviz.ess(chains[:,0,:])
-#             print(                f"********************  # ESS values = {ess}  ********************"
-#                 )
-
-
-#             plt.figure()
-#             plt.plot(autocov[0,:])
-#             plt.title('Autocovariance first chain')
-#             plt.xlabel('Lag')
-#             plt.ylabel('Autocovariance')
-#             plt.legend()
-#             plt.show()
-    
-#     return estimates
-
-
-
-
-# def plot_hist(estimates, real_x, output1,output2):   
-#     values2=estimates
-#     values1=real_x
-#     diff_output=np.abs(output1-output2)
-#     diff_value=np.abs(values1-values2)
-#     print(f"the difference between estimated values {diff_value}\n")
-#     values = np.vstack((values1, values2))
-
-#     # Creare categorie in base alla lunghezza di values
-#     categories = np.arange(1, values.shape[1] + 1)
-
-#     # Larghezza delle colonne
-#     bar_width = 0.35
-
-#     # Posizioni delle colonne
-#     bar_positions = [categories - bar_width/2 + i*bar_width for i in range(values.shape[0])]
-#     plt.figure()
-#     # Creazione del plot
-#     for i in range(values.shape[0]):
-#         plt.bar(bar_positions[i], values[i, :], width=bar_width)
-
-
-#     plt.ylabel('Value')
-#     plt.title('Input')
-#     plt.xticks(categories)
-#     plt.legend(["Real value", "Estimate"])
-
-
-
-#     plt.show()
-
-#     return
-    
-    
-def custom_loss(y_pred,y_true):
-    goodind = K.not_equal(y_pred,-10)
-    #goodind = tf.math.logical_not(tf.math.is_nan(y_pred))
-    y_pred_loss = tf.boolean_mask(y_pred,goodind)
-    y_pred_true = tf.boolean_mask(y_true,goodind)
+    # Compute mean squared error loss
     return K.mean(K.square(y_pred_loss - y_pred_true))
 
 
 
+# Get Optimizer
+def getOpti(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
+    """
+    Returns the optimizer based on the given name.
+
+    Args:
+        name (str): Name of the optimizer.
+        lr (float): Learning rate for the optimizer.
+
+    Returns:
+        tf.keras.optimizers.Optimizer: The selected optimizer.
+
+    Raises:
+        ValueError: If the optimizer name is unknown.
+    """
+    optimizers = {
+        'Adam': Adam(learning_rate=lr, amsgrad=True),
+        'Nadam': Nadam(learning_rate=lr),
+        'Adamax': Adamax(learning_rate=lr),
+        'standardadam': 'adam'
+    }
+    
+    if name not in optimizers:
+        raise ValueError(f"Unknown optimizer name: {name}")
+    
+    return optimizers[name]
 
 
-def getOpti(name,lr):
-    if name == 'Adam':
-        return Adam(learning_rate=lr,amsgrad=True)
-    elif name == 'Nadam':
-        return Nadam(learning_rate=lr)
-    elif name == 'Adamax':
-        return Adamax(learning_rate=lr)
-    elif name == 'RMSprop':
-        return RMSprop(learning_rate=lr)
-    elif name == 'standardadam':
-        return 'adam'
+def getModel(params: ParamsType, num_inputs: int, name: str, num_outputs: int) -> OutputType:
+    """
+    Create and return a compiled Keras model based on the given architecture name and parameters.
 
+    Args:
+        params (Dict): Dictionary containing model parameters like 'nodes', 'dropout', 'l2weight', etc.
+        num_inputs (int): Number of input features.
+        name (str): Name of the model architecture ('LSTM', 'HF', 'LF', 'Single', 'Hflin', 'Hfper', 'GP', 'Inter').
+        num_outputs (int): Number of output neurons.
 
+    Returns:
+        model (Model or List[Model]): Compiled Keras model, or list of models for some architectures.
+    """
 
+    inputs = None
+    output = None
 
-
-def getModel(params,num_inputs,name,num_outputs):
-    if(name == "LSTM"):
+    if name == "LSTM":
+        # Input layer for LSTM model
         inputs = Input(shape=(None, num_inputs))
-        a=inputs
+        a = inputs
 
+        # LSTM layers with Dropout
         for i in range(params['lay']):
             a = Dropout(params['dropout'])(a)
-            a = LSTM(params['nodes'], return_sequences = True)(a)
+            a = LSTM(params['nodes'], return_sequences=True)(a)
 
-        output = Dense(num_outputs,activation='linear')(a)
-        # model = Model(inputs = inputs, outputs = outputs)
-        # opti = getOpti(params['opti'],params['lr'])
-        # model.compile(loss = 'mse', optimizer = opti, metrics = ['mse'])
+        # Dense output layer
+        output = Dense(num_outputs, activation='linear')(a)
 
+    elif name == 'HF':
+        # High-frequency model with regularization
+        inputs = Input(shape=(num_inputs,))
+        hidden1 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2(params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
+        output = Dense(num_outputs, activation='linear', name='HF')(hidden1)
 
-    if(name == 'HF'):
+    elif name == 'LF':
+        # Low-frequency model with 4 hidden layers
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        #hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        output = Dense(num_outputs,activation='linear',name='HF')(hidden1)     
-    elif (name == 'LF'):
+        hidden1 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(inputs)
+        hidden2 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(hidden1)
+        hidden3 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(hidden2)
+        hidden4 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(hidden3)
+        output = Dense(num_outputs, activation='linear', name='LF')(hidden4)
+
+    elif name == 'Single':
+        # Single model architecture with L2 regularization
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
-        hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
-        hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden2)
-        hidden4 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden3)
-        output = Dense(num_outputs,activation='linear',name='LF')(hidden4)
-        
-    elif (name == 'Single'):
+        hidden1 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], kernel_regularizer=l2(params['l2weight']))(inputs)
+        hidden2 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], kernel_regularizer=l2(params['l2weight']))(hidden1)
+        hidden3 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], kernel_regularizer=l2(params['l2weight']))(hidden2)
+        output = Dense(num_outputs, activation='linear', name='Single')(hidden3)
+
+    elif name == 'Hflin':
+        # High-frequency linear model
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(inputs)
-        hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden1)
-        hidden3 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden2)
-        hidden4 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'],kernel_regularizer=l2(params['l2weight']))(hidden3)
-        output = Dense(num_outputs,activation='linear',name='Single')(hidden2)        
-        
-    elif (name == 'Hflin'):
+        hiddenlin = Dense(64, activation='linear', kernel_regularizer=l2(params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
+        output = Dense(num_outputs, activation='linear', name='HFlin')(hiddenlin)
+
+    elif name == 'Hfper':
+        # High-frequency model with custom activation
         inputs = Input(shape=(num_inputs,))
-        hiddenlin = Dense(64,activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(num_outputs,activation='linear',name='HFlin')(hiddenlin)
-        
-    elif(name == 'Hfper'):
+        hiddenlin = Dense(64, activation=custom_activation, kernel_regularizer=l2(params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
+        output = Dense(num_outputs, activation='linear', name='HFper')(hiddenlin)
+
+    elif name == 'GP':
+        # Gaussian Process inspired model with dual outputs
         inputs = Input(shape=(num_inputs,))
-        hiddenlin = Dense(64,activation=custom_activation,kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        output = Dense(num_outputs,activation='linear',name='HFper')(hiddenlin)    
-      # check p'arametri output  
-    elif (name == 'GP'):
-        inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(inputs)
-        hidden2 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden1)
-        hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
-        hidden4 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden3)
-        GPlayer = Dense(2,activation='linear',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden4)
-        outputLF = Dense(1,activation='linear',name='LF')(GPlayer)
-        outputHF = Dense(1,activation='linear',name='HF')(GPlayer)   
-        output = [outputHF,outputLF]
+        hidden1 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
+        hidden2 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden1)
+        hidden3 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden2)
+        hidden4 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden3)
+        GPlayer = Dense(2, activation='linear', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden4)
+        outputLF = Dense(1, activation='linear', name='LF')(GPlayer)
+        outputHF = Dense(1, activation='linear', name='HF')(GPlayer)
+        output = [outputHF, outputLF]
+
+        # Compile model with custom loss and optimizer
         model = Model(inputs=inputs, outputs=output)
-        opti = getOpti(params['opt'],params['lr'])
-        model.compile(loss=custom_loss,loss_weights=[params['alpha'],1-params['alpha']],optimizer=opti)    
+        opti = getOpti(params['opt'], params['lr'])
+        model.compile(loss=custom_loss, loss_weights=[params['alpha'], 1-params['alpha']], optimizer=opti)
         return model
-    
-    elif (name == 'Inter'):
+
+    elif name == 'Inter':
+        # Intermediate frequency model with dual outputs
         inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(inputs)
-        hidden2 = Dense(64,activation='tanh',kernel_initializer=params['kernel_init'])(hidden1)
-        outputLF = Dense(1,activation='linear',name='LF')(hidden2)
-        outputadd = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden2)
-        merge = concatenate([outputLF,outputadd])
-        hidden3 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(merge)
-        hidden4 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden3)
-        #hidden5 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden4)
-        #hidden6 = Dense(int(params['nodes']),activation='tanh',kernel_regularizer=l2((1-params['alpha'])*params['l2weight']),kernel_initializer=params['kernel_init'])(hidden5)
-  
-        #lincorr = Dense(int(params['nodes']),activation='linear',kernel_regularizer=l2(params['l2weight']),kernel_initializer=params['kernel_init'])(outputLF)
-        #merge2 = concatenate([hidden3,lincorr])
-        outputHF = Dense(1,activation='linear',name='HF')(hidden4)
-        output = [outputHF,outputLF]
+        hidden1 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(inputs)
+        hidden2 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'])(hidden1)
+        outputLF = Dense(1, activation='linear', name='LF')(hidden2)
+        outputadd = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden2)
+        merge = concatenate([outputLF, outputadd])
+        hidden3 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(merge)
+        hidden4 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden3)
+        outputHF = Dense(1, activation='linear', name='HF')(hidden4)
+        output = [outputHF, outputLF]
+
+        # Compile model with custom loss and optimizer
         model = Model(inputs=inputs, outputs=output)
-        opti = getOpti(params['opt'],params['lr'])
-        model.compile(loss=custom_loss,loss_weights=[params['alpha'],1-params['alpha']],optimizer=opti)
+        opti = getOpti(params['opt'], params['lr'])
+        model.compile(loss=custom_loss, loss_weights=[params['alpha'], 1-params['alpha']], optimizer=opti)
         return model
- 
-        
-    model = Model(inputs=inputs,  outputs=output)
-    opti = getOpti(params['opt'],params['lr'])
-    model.compile(loss='mse',optimizer=opti,metrics=['mse'])
+
+    # General model compilation for other architectures
+    model = Model(inputs=inputs, outputs=output)
+    opti = getOpti(params['opt'], params['lr'])
+    model.compile(loss='mse', optimizer=opti, metrics=['mse'])
+
     return model
 
 
 
-
-def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray, Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def process_data(datahf: np.ndarray, 
+                 parameters: np.ndarray, 
+                 t_eval: np.ndarray, 
+                 Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
     Find the elements of a dataset nearest to the given parameters.
     
@@ -433,10 +271,24 @@ def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
     """
     return sigma ** 2 * np.eye(t_eval.shape[0])
 
-def run_simulation(datahf_x: np.ndarray, datahf: np.ndarray, mean_prior: np.ndarray, cov_prior: np.ndarray, Yhf: np.ndarray, 
-                   sigma_noise: List[float], n_data: List[int], n_data_x:List[int], parameters: np.ndarray, sigma: np.ndarray, 
-                   rwmh_scaling: np.ndarray, rwmh_cov: np.ndarray, rwmh_adaptive: bool, 
-                   iterations: int, burnin: int, n_chains: int, final_model: Any, algo: str, 
+def run_simulation(datahf_x: np.ndarray, 
+                   datahf: np.ndarray, 
+                   mean_prior: np.ndarray, 
+                   cov_prior: np.ndarray, 
+                   Yhf: np.ndarray, 
+                   sigma_noise: List[float], 
+                   n_data: List[int], 
+                   n_data_x:List[int], 
+                   parameters: np.ndarray, 
+                   sigma: np.ndarray, 
+                   rwmh_scaling: np.ndarray, 
+                   rwmh_cov: np.ndarray, 
+                   rwmh_adaptive: bool, 
+                   iterations: int,
+                   burnin: int, 
+                   n_chains: int, 
+                   final_model: Any, 
+                   algo: str, 
                    forward_low_fidelity: Optional[Callable] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     Run a simulation to estimate parameters and calculate errors.
@@ -476,7 +328,7 @@ def run_simulation(datahf_x: np.ndarray, datahf: np.ndarray, mean_prior: np.ndar
     for (i, noise), (k, n),(w,n_x), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(n_data_x), enumerate(sigma), enumerate(rwmh_scaling)):
         t_eval = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), n).reshape(-1, 1)  # Generate evaluation times
         x_eval=np.linspace(np.min(datahf_x),np.max(datahf_x),n_x).reshape(-1, 1)
-        nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest t values and observations
+        _, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest t values and observations
         cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
         
         # Perform parameter estimation and calculate error

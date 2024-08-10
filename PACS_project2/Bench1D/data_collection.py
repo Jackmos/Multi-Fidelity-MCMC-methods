@@ -215,9 +215,3 @@ class FidelityFunctionModified:
         plt.title('Benchmark 1D - Detailed')
         plt.show()
 
-
-
-
-
-
-

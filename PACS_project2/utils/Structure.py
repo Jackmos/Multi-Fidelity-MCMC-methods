@@ -26,6 +26,7 @@ from cuqi.geometry import Continuous1D, Discrete
 import re
 import tinyDA as tda
 import optuna
+from keras.src.callbacks.tensorboard import TensorBoard
 
 ############################
 import logging
@@ -67,7 +68,8 @@ class NetworkFactory:
                       train: bool = True,
                       do_HPO: bool = False,
                       verbose: bool = False,
-                      device: str = '/CPU:0') -> 'INetwork':
+                      device: str = '/CPU:0',
+                      profiler:TensorBoard=None) -> 'INetwork':
         """
         Build and return a network of the specified type.
 
@@ -83,6 +85,7 @@ class NetworkFactory:
         - do_HPO (bool): Flag indicating whether to perform hyperparameter optimization.
         - verbose (bool): Flag indicating whether to print verbose output.
         - device (str): denotes GPU or CPU 
+        - profiler (TensorBoard): allows to use the profiler to study the keras network performance
 
         Returns:
         - INetwork: The created network object.
@@ -99,20 +102,20 @@ class NetworkFactory:
             match = re.match(r'(\d+)STEP', network_type, re.IGNORECASE)
             if match:
                 n_step = int(match.group(1))
-                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device)
+                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device, profiler=profiler)
             else:
                 raise ValueError(f"Invalid network type: {network_type}")
             
         # Map the enum to the respective network class constructors.
         if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN, NetworkType.HFPER}:
-            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose,device=device)
+            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose,device=device, profiler=profiler)
         
         elif  network_type_enum ==  NetworkType["STEP"]: #network_type_enum == NetworkType.step:
             # Ensure data_train and output_train are lists for MultiFidelity networks.
             if not (isinstance(data_train, list) and isinstance(output_train, list)):
                 raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
             
-            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device)
+            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device, profiler=profiler)
         
         elif network_type_enum == NetworkType.INTER:
             return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose, device=device)
@@ -469,7 +472,8 @@ class Neural_Network(INetwork):
         do_HPO: bool = False, 
         transformations: Optional[list] = None, 
         verbose: bool = False,
-        device: str = '/CPU:0'
+        device: str = '/CPU:0', 
+        profiler: TensorBoard = None
     ):
         """
         Initializes the Neural_Network instance.
@@ -514,7 +518,7 @@ class Neural_Network(INetwork):
 
         # Train the model if required
         if train:
-            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device) 
+            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device, callbacks=profiler) 
             self.plot_training_loss()
 
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
@@ -546,7 +550,7 @@ class Neural_Network(INetwork):
 
 
     @compute_time
-    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int, device: str = '/CPU:0') -> Any:
+    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int, device: str = '/CPU:0', callbacks: TensorBoard=None) -> Any:
         """
         Trains the model on the given data.
         
@@ -559,10 +563,14 @@ class Neural_Network(INetwork):
         Returns:
             Any: The training history.
         """
-        
-        with tf.device(device):
+        if callbacks is not None:
+            with tf.device(device):
 
-            self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
+                self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0, callbacks=[callbacks])
+        else:
+            with tf.device(device):
+
+                self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
         
         return self.hist
 
@@ -715,7 +723,7 @@ class MultiFidelity(INetwork):
                  n: Optional[List[int]] = None, 
                  do_HPO: bool = False, 
                  verbose: bool = False,
-                 device: str ='/CPU:0'):
+                 device: str ='/CPU:0', profiler: TensorBoard=None):
         """
         Initialize MultiFidelity network.
 
@@ -768,7 +776,8 @@ class MultiFidelity(INetwork):
                 train=True,
                 do_HPO=do_HPO,
                 verbose=verbose,
-                device=device
+                device=device,
+                profiler=profiler
             )
             self.model_list.append(model)
             

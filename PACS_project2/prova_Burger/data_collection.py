@@ -199,32 +199,6 @@ class BurgerEquation:
         plt.tight_layout()
         plt.show()
 
-    # def plot_data(self) -> None:
-    #     """
-    #     Plot the generated data for both high-fidelity and low-fidelity models.
-    #     """
-    #     for ind_re in range(self.nre_train):
-    #         t_grid, x_grid = np.meshgrid(self.t, self.x)
-    #         fig = plt.figure(figsize=(6, 5))
-
-    #         ax = fig.add_subplot(211)
-    #         surf = ax.contourf(t_grid, x_grid, self.u_lf[ind_re].T, cmap='plasma', levels=10)
-    #         plt.xlabel('t', fontsize=12)
-    #         plt.ylabel('x', fontsize=12, labelpad=15, rotation=0)
-    #         cbar = fig.colorbar(surf, ax=ax)
-    #         cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
-    #         plt.title(f'Low-fidelity $Re = ${int(self.denormalize(self.re_train[ind_re]))}', fontsize=14)
-
-    #         ax = fig.add_subplot(212)
-    #         surf = ax.contourf(t_grid, x_grid, self.u_hf[ind_re].T, cmap='plasma', levels=10)
-    #         plt.xlabel('t', fontsize=12)
-    #         plt.ylabel('x', fontsize=12, labelpad=15, rotation=0)
-    #         cbar = fig.colorbar(surf, ax=ax)
-    #         cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
-    #         plt.title(f'High-fidelity $Re = ${int(self.denormalize(self.re_train[ind_re]))}', fontsize=14)
-
-    #         plt.tight_layout()
-    #         plt.show()
 
     def plot_single_contour(self, ax, t_grid: np.ndarray, x_grid: np.ndarray, data: np.ndarray, title: str, xlabel: str, ylabel: str, cmap: str = 'plasma', levels: int = 10, colorbar_label: str = 'u'):
         """
@@ -256,33 +230,59 @@ class BurgerEquation:
         # Set title
         ax.set_title(title, fontsize=14)
 
+
     def plot_data(self):
         """
         Plot the generated data for both high-fidelity and low-fidelity models.
         """
-        abs_lf = np.abs(self.u_lf)
-        abs_hf= np.abs(self.u_hf)
+        # Sort the Re values and get the sorted indices
+        sorted_indices = np.argsort(self.re_train)
+
+        # Reorder the Re values and corresponding u_lf, u_hf based on the sorted indices
+        sorted_re_train = self.re_train[sorted_indices]
+        sorted_u_lf = self.u_lf[sorted_indices]
+        sorted_u_hf = self.u_hf[sorted_indices]
+
+        abs_lf = np.abs(sorted_u_lf)
+        abs_hf = np.abs(sorted_u_hf)
         max_abs = max(abs_lf.max(), abs_hf.max())
         levels = np.linspace(0, max_abs, 11)
-        
-        for ind_re in range(self.nre_train):
-            t_grid, x_grid = np.meshgrid(self.t, self.x)
-            fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(6, 5))
+
+        # Number of plots per figure (3 pairs of LF-HF plots)
+        plots_per_figure = 3
+
+        for i in range(0, self.nre_train, plots_per_figure):
+            # Determine how many pairs to plot in this figure
+            num_plots = min(plots_per_figure, self.nre_train - i)
             
-            lf_title = f'Low-fidelity $Re = ${int(self.denormalize(self.re_train[ind_re]))}'
-            self.plot_single_contour(axes[0], t_grid, x_grid, self.u_lf[ind_re], lf_title, 't', 'x', levels=levels)
+            fig, axes = plt.subplots(nrows=num_plots, ncols=2, figsize=(12, 3 * num_plots))
             
-            hf_title = f'High-fidelity $Re = ${int(self.denormalize(self.re_train[ind_re]))}'
-            self.plot_single_contour(axes[1], t_grid, x_grid, self.u_hf[ind_re], hf_title, 't', 'x', levels=levels)
+            # Ensure axes is always a 2D array
+            if num_plots == 1:
+                axes = np.expand_dims(axes, axis=0)
+            
+            for j in range(num_plots):
+                ind_re = i + j
+                t_grid, x_grid = np.meshgrid(self.t, self.x)
+                
+                lf_title = f'Low-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
+                self.plot_single_contour(axes[j, 0], t_grid, x_grid, sorted_u_lf[ind_re], lf_title, 't', 'x', levels=levels)
+
+                hf_title = f'High-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
+                self.plot_single_contour(axes[j, 1], t_grid, x_grid, sorted_u_hf[ind_re], hf_title, 't', 'x', levels=levels)
             
             plt.tight_layout()
             plt.show()
 
+    
     def plot_comparison(self, output_pred, basis, ind_test):
         """
         Plot comparison of low-fidelity, high-fidelity, and predicted data.
         """
+        # Reconstruct u_pred and handle NaNs or infinite values
         u_pred = output_pred @ basis.T
+        u_pred = np.nan_to_num(u_pred, nan=0.0, posinf=0.0, neginf=0.0)
+
         t_grid, x_grid = np.meshgrid(self.t, self.x)
 
         abs_lf = np.abs(self.u_lf_test)
@@ -301,13 +301,15 @@ class BurgerEquation:
             hf_title = 'High-fidelity'
             self.plot_single_contour(axes[1], t_grid, x_grid, self.u_hf_test[ind_re], hf_title, 't', 'x', levels=levels, colorbar_label='$u_{HF}$')
             
+            # Clip u_pred to avoid exceeding contour levels
+            u_pred_clipped = np.clip(u_pred[ind_re], levels.min(), levels.max())
             pred_title = 'MF-POD prediction'
-            self.plot_single_contour(axes[2], t_grid, x_grid, u_pred[ind_re], pred_title, 't', 'x', levels=levels, colorbar_label='$u_{POD}$')
+            self.plot_single_contour(axes[2], t_grid, x_grid, u_pred_clipped, pred_title, 't', 'x', levels=levels, colorbar_label='$u_{POD}$')
             
             plt.tight_layout()
             plt.show()
-    
-    
+
+
     def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray):
         """
         Plot the relative and absolute errors for low-fidelity (LF) and multi-fidelity POD (MF-POD) predictions.
@@ -340,10 +342,10 @@ class BurgerEquation:
             plt.suptitle(f'Re = {int(self.denormalize(self.re_test[ind_re]))}', fontsize=14)
             
             ax = fig.add_subplot(211)
-            self.plot_single_contour(ax, t_grid, x_grid, abs_err_lf[ind_re], 'Absolute error for LF', 't', 'x', cmap='bwr', levels=levels, colorbar_label='abs. err.')
+            self.plot_single_contour(ax, t_grid, x_grid, abs_err_lf[ind_re], 'Absolute error for LF', 't', 'x', cmap='bwr', levels=levels, colorbar_label='Err.')
 
             ax = fig.add_subplot(212)
-            self.plot_single_contour(ax, t_grid, x_grid, abs_err_pred[ind_re], 'Absolute error for MF-POD', 't', 'x', cmap='bwr', levels=levels, colorbar_label='abs. err.')
+            self.plot_single_contour(ax, t_grid, x_grid, abs_err_pred[ind_re], 'Absolute error for MF-POD', 't', 'x', cmap='bwr', levels=levels, colorbar_label='Err.')
 
             plt.tight_layout()
             plt.show()
