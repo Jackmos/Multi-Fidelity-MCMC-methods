@@ -31,7 +31,7 @@ class ReactionDiffusionData:
 
         self.n_POD=None
         self.basis=None
-
+        self.fwd_uLF=[]
 
         self.tlf_0 = tlf_0
         self.thf_0 = thf_0
@@ -217,57 +217,39 @@ class ReactionDiffusionData:
         self.u_lf_test = griddata(coord_LF, self.u_lf_test.reshape(-1, self.Nt_lf_test, self.N_mu_test), coord_HF, method='nearest').reshape(self.Nx_hf, self.Ny_hf, self.Nt_lf_test, self.N_mu_test)
 
         self.N = self.Nx_hf * self.Ny_hf
-
-
-    def _import_class_from_h5(self,filename):
-        with h5py.File(filename, 'r') as h5file:
-            # Replace 'your_dataset_name' with the actual dataset name
-            dataset = h5file['your_dataset_name'][:]
-            # Unpickle the dataset to load the class
-            python_class = pickle.loads(dataset)
-        return python_class
     
 
-    
+    def _import_uLF_POD_evaluation(self, filenames:List[str]=None) -> None:
+        # assumendo che non cambia nel momento in cui definisci LSTM
 
-    def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, x_support: np.ndarray) -> np.ndarray:
+
+        for i in len(filenames):
+            
+            mod=NetworkFactory.build_network(network_type="LSTM")
+            mod.load(filenames[i])
+            self.fwd_uLF.append(mod)
+
+
+
+    def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, LSTM_list: List[str]) -> np.ndarray:
         """
         Generate low fidelity model using POD basis.
+        Useful for BIP 
 
         Parameters:
         - x_final (np.ndarray): Final input data.
         - data_points (np.ndarray): Data points to project onto the POD basis.
-
+        - LSTM_list (List[dict]): List containing the LSTM model and its parameters.
         Returns:
         - new_inputs (np.ndarray): New input data incorporating low fidelity model.
         """
-        if self.n_POD is None or self.basis is None:
-            raise KeyError("POD basis not provided")
-
-        dim_data = data_points.shape[0]
-        dim_support = x_support.shape[0]
-
-        u_lf_inv = np.zeros((1, dim_data, dim_support))
-
-        for n in range(dim_data):       
-            for i in range(dim_support):
-                u_lf_inv[0, n, i] = self.u_LF(x_support[i,0], data_points[n, 0], self.denormalize(x_final[0]))
-
-        # Reshape and project onto the POD basis
-        u_lf_pod = np.reshape(u_lf_inv, (dim_data, dim_support))
-        ulf_train = u_lf_pod @ self.basis
-        ulf_train = np.reshape(ulf_train, (1, dim_data, self.n_POD))
-
-        # Assuming self.inputs and self.inputs[0,:,:1] are defined elsewhere in your class
-        t_grid_lstm, re_grid_lstm = np.meshgrid(data_points[:,0], x_final[0])
         
-        # Adjusting the axes order for concatenation
-        t_grid_lstm = np.expand_dims(t_grid_lstm, axis=-1)
-        re_grid_lstm = np.expand_dims(re_grid_lstm, axis=-1)
-
-        # Concatenate along the last axis
-        #new_inputs = np.concatenate((t_grid_lstm, re_grid_lstm, ulf_train), axis=2)
-        new_inputs = np.concatenate(( re_grid_lstm, ulf_train), axis=2)
+        if not self.fwd_uLF:
+            self._import_uLF_POD_evaluation(LSTM_list)
+            
+        data_norm=self.normalize(data_points)# completa con self. tmax, self.t min
+        #predicition con struttura adatta per mettere tutto assieme
+        
         return new_inputs
 
 

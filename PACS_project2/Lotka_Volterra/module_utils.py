@@ -105,6 +105,7 @@ def run_simulation(
     n_chains: int, 
     final_model, 
     algo: str, 
+    levels:int=1,
     force_sequential:bool=False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -127,7 +128,8 @@ def run_simulation(
     - n_chains: Integer for the number of chains.
     - final_model: The model object with the param_inverse method.
     - algo: String indicating the algorithm to use.
-    - parallel: if True impose a sequential approach to the MCMC algorithm
+    - levels: number of levels to implement a ML MCMC approach. Valid only for Multifidelity networks to exploit different accuracy discretization levels
+    - force_sequential: if True impose a sequential approach to the MCMC algorithm
 
     Returns:
     - best_estimate: The best parameter estimate.
@@ -148,7 +150,7 @@ def run_simulation(
 
         # Perform parameter estimation and calculate error
         est, err, param_res = final_model.param_inverse(
-            mean_prior, t_eval, max_par=max(datahf[:,1]),cov_prior=cov_prior, rmwh_scaling=r, 
+            mean_prior, t_eval, max_par=max(datahf[:,1]),cov_prior=cov_prior, rmwh_scaling=r, levels=levels,
             cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
             x_real=parameters, number_chains=n_chains, N=iterations, 
             burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 

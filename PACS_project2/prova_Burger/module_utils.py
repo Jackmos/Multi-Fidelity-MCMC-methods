@@ -289,7 +289,8 @@ def run_simulation(datahf_x: np.ndarray,
                    n_chains: int, 
                    final_model: Any, 
                    algo: str, 
-                   forward_low_fidelity: Optional[Callable] = None) -> Tuple[np.ndarray, np.ndarray]:
+                   force_sequential:bool=False,
+                   forward_low_fidelity: Optional[Callable] = None) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
     """
     Run a simulation to estimate parameters and calculate errors.
     
@@ -312,18 +313,20 @@ def run_simulation(datahf_x: np.ndarray,
     - n_chains (int): Integer for the number of chains.
     - final_model (Any): The model object with the param_inverse method.
     - algo (str): String indicating the algorithm to use.
+    - force_sequenntial (bool): True to avoid parallelization
     - forward_low_fidelity (Optional[Callable]): Low fidelity forward model function (optional).
     
     Returns:
     - best_estimate (np.ndarray): The best parameter estimate.
     - best_error (np.ndarray): The error corresponding to the best estimate.
+    - param_final (List[dict]): list of parameter of MCMC algorithm  
     """
     
     # Initialize error and estimate arrays
     error_shape = (len(sigma_noise), len(n_data), len(n_data_x),len(sigma), len(rwmh_scaling))
     error = np.zeros(error_shape)
     estimates = np.zeros(error_shape)
-    
+    param_final=[]    
     # Iterate over all combinations of parameters using itertools.product
     for (i, noise), (k, n),(w,n_x), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(n_data_x), enumerate(sigma), enumerate(rwmh_scaling)):
         t_eval = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), n).reshape(-1, 1)  # Generate evaluation times
@@ -331,15 +334,29 @@ def run_simulation(datahf_x: np.ndarray,
         _, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest t values and observations
         cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
         
-        # Perform parameter estimation and calculate error
-        estimates[i, k, w,t, j], error[i, k,w, t, j] = final_model.param_inverse(
-            mean_prior, x_eval, t_eval, cov_prior=cov_prior, rmwh_scaling=r, 
-            cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-            x_real=parameters, number_chains=n_chains, N=iterations, 
-            burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, algo=algo, forward_low_fidelity=forward_low_fidelity
+        # Perform parameter estimation and calculate error 
+        
+        estimates[i, k, w,t, j], error[i, k,w, t, j], par = final_model.param_inverse(
+            mean_prior=mean_prior, 
+            x_data=t_eval, 
+            cov_prior=cov_prior, 
+            rmwh_scaling=r, 
+            cov_noise=noise, 
+            cov_likelihood=cov_likelihood, 
+            y_obs=y_obs, 
+            x_real=parameters, 
+            number_chains=n_chains, 
+            N=iterations, 
+            burn_in=burnin, 
+            diagnostic=True, 
+            rwmh_cov=rwmh_cov, 
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            force_sequential=force_sequential,
+            forward_low_fidelity=forward_low_fidelity, 
+            x_eval
         )
-    
+        param_final.append(par)
     # Identify the index of the minimum error
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
     best_estimate = estimates[smallest_index]
@@ -350,4 +367,4 @@ def run_simulation(datahf_x: np.ndarray,
           f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
           f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
 
-    return best_estimate, best_error
+    return best_estimate, best_error, param_final

@@ -232,7 +232,7 @@ class INetwork(ABC):
                       rwmh_adaptive: bool = True, 
                       algo: str = "MH",
                       force_sequential: bool = False,
-                      transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray]:
+                      transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
 
         """
         Perform parameter inversion using MCMC sampling.
@@ -291,7 +291,9 @@ class INetwork(ABC):
             y_obs = y_obs.flatten()
 
         if levels > 1:
-            if levels > len(self.model_list):
+            if 'self.model_list' not in locals():
+                warnings.warn("1 level case considered", UserWarning)
+            elif levels > len(self.model_list):
                 warnings.warn("Number of levels is exceeding the number of models", UserWarning)
             else:
                 my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood) for _ in range(levels)]
@@ -310,6 +312,7 @@ class INetwork(ABC):
         
         error = np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
         return estimates, error, param_results    
+   
 
     @compute_time
     def inverse_cuqi(self,mean_prior: np.ndarray, 
@@ -976,9 +979,9 @@ class LSTM_network(INetwork):
         if train: 
             self.hist = self.training(int(params['sequence_length']),int(params['sequence_freq']),epoch=self.N,device=device) 
             self.plot_training_loss()
-        else:
-            name = './models/MF_POD_model'
-            self.model = tf.keras.models.load_model(name) 
+        # else:
+        #     name = './models/MF_POD_model'
+        #     self.model = tf.keras.models.load_model(name) 
 
 
     @compute_time

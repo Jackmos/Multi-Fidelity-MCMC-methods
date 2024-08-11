@@ -90,7 +90,8 @@ class BurgerEquation:
     def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, x_support: np.ndarray) -> np.ndarray:
         """
         Generate low fidelity model using POD basis.
-
+        Useful for BIP 
+        
         Parameters:
         - x_final (np.ndarray): Final input data.
         - x_support (np.ndarray): Support data points.
@@ -116,7 +117,6 @@ class BurgerEquation:
         ulf_train = u_lf_pod @ self.basis
         ulf_train = np.reshape(ulf_train, (1, dim_data, self.n_POD))
 
-        # Assuming self.inputs and self.inputs[0,:,:1] are defined elsewhere in your class
         t_grid_lstm, re_grid_lstm = np.meshgrid(data_points[:,0], x_final[0])
         
         # Adjusting the axes order for concatenation
