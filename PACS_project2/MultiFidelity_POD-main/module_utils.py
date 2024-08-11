@@ -290,44 +290,57 @@ class Attention(Layer):
         return context_vector
 
 def getModel(params,num_inputs,name,num_outputs):
-    # if(name == "LSTM"):
-    #     inputs = Input(shape=(None, num_inputs))
-
-    #     a = LSTM(params['nodes'], return_sequences = True)(inputs) 
-    #     for i in range(params['lay']-1):
-    #         a = Dropout(params['dropout'])(a)
-    #         a = LSTM(params['nodes'], return_sequences = True)(a)
-    #     for i in range(params['lay_dense']):
-    #         a  = Dense(params['nodes_dense'])(a)
-        
-    #     output = Dense(num_outputs,activation='linear')(a)
-
-
-    if (name == "LSTM"):
+    if(name == "LSTM"):
         inputs = Input(shape=(None, num_inputs))
-        if params["sched"] is True:
-            params['lr'] = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=params['lr_init'],
-            decay_steps=5000,
-            decay_rate=0.9)
-        else:
-            params['lr']=params['lr_init']
 
-        a = LSTM(params['nodes'], return_sequences=True, kernel_regularizer=l2(params['l2_reg']))(inputs)
-                # Adding a Fourier Layer
-        a = FourierLayer(output_dim=params['nodes'])(a)
+        a = LSTM(params['nodes'], return_sequences = True)(inputs) 
+        for i in range(params['lay']-1):
+            a = Dropout(params['dropout'])(a)
+            a = LSTM(params['nodes'], return_sequences = True)(a)
+        for i in range(params['lay_dense']):
+            a  = Dense(params['nodes_dense'])(a)
+        
+        output = Dense(num_outputs,activation='linear')(a)
+
+
+    elif (name == "LSTM_support"):
+        # inputs = Input(shape=(None, num_inputs))
+        # if params["sched"] is True:
+        #     params['lr'] = tf.keras.optimizers.schedules.ExponentialDecay(
+        #     initial_learning_rate=params['lr_init'],
+        #     decay_steps=5000,
+        #     decay_rate=0.9)
+        # else:
+        #     params['lr']=params['lr_init']
+
+        # a = LSTM(params['nodes'], return_sequences=True, kernel_regularizer=l2(params['l2_reg']))(inputs)
+        #         # Adding a Fourier Layer
+        # a = FourierLayer(output_dim=params['nodes'])(a)
+        # for i in range(params['lay'] - 1):
+        #     a = Dropout(params['dropout'])(a)
+        #     a = LSTM(params['nodes'], return_sequences=True, kernel_regularizer=l2(params['l2_reg']))(a)
+        
+        # # Adding a Fourier Layer
+        # a = FourierLayer(output_dim=params['nodes'])(a)
+        
+        # for i in range(params['lay_dense']):
+        #     a = Dense(params['nodes_dense'], activation=custom_activation, kernel_regularizer=l2(params['l2_reg']))(a)
+            
+        # output = Dense(num_outputs, activation='linear')(a)
+        inputs = Input(shape=(None, num_inputs))
+        
+        a = LSTM(params['nodes'], return_sequences=True)(inputs)
         for i in range(params['lay'] - 1):
             a = Dropout(params['dropout'])(a)
-            a = LSTM(params['nodes'], return_sequences=True, kernel_regularizer=l2(params['l2_reg']))(a)
+            a = LSTM(params['nodes'], return_sequences=True)(a)
         
         # Adding a Fourier Layer
         a = FourierLayer(output_dim=params['nodes'])(a)
         
         for i in range(params['lay_dense']):
-            a = Dense(params['nodes_dense'], activation=custom_activation, kernel_regularizer=l2(params['l2_reg']))(a)
+            a = Dense(params['nodes_dense'], activation=custom_activation)(a)
             
         output = Dense(num_outputs, activation='linear')(a)
-
 
 
 # inputs = Input(shape=(None, num_inputs))

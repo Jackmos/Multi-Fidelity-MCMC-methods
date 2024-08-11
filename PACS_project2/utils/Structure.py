@@ -52,6 +52,7 @@ class NetworkType(Enum):
     HFPER = "Hfper"
     INTER = "Inter"
     LSTM = "LSTM"
+    LSTM_SUPPORT="LSTM_support"
     STEP = "step"
 
 # Factory class to build different types of networks based on the provided type.
@@ -120,8 +121,8 @@ class NetworkFactory:
         elif network_type_enum == NetworkType.INTER:
             return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose, device=device)
         
-        elif network_type_enum == NetworkType.LSTM:
-            return LSTM_network(params, data_train, output_train, N, train, do_HPO, verbose, device=device)
+        elif network_type_enum == NetworkType.LSTM or network_type_enum==NetworkType.LSTM_SUPPORT:
+            return LSTM_network(network_type,params, data_train, output_train, N, train, do_HPO, verbose, device=device)
 
         raise ValueError(f"Invalid network type: {network_type}")
 
@@ -921,6 +922,7 @@ class MultiFidelity(INetwork):
 class LSTM_network(INetwork):
 
     def __init__(self, 
+                 name:str='LSTM',
                  params: Optional[dict] = None, 
                  data_train: Optional[np.ndarray] = None, 
                  output_train: Optional[np.ndarray] = None, 
@@ -945,7 +947,7 @@ class LSTM_network(INetwork):
 
         """
         self.params = params
-        self.name = "LSTM" 
+        self.name = name 
         self.N = N
         self.verbose = verbose
         self.hist = None
@@ -976,9 +978,9 @@ class LSTM_network(INetwork):
         if train: 
             self.hist = self.training(int(params['sequence_length']),int(params['sequence_freq']),epoch=self.N,device=device) 
             self.plot_training_loss()
-        else:
-            name = './models/MF_POD_model'
-            self.model = tf.keras.models.load_model(name) 
+        # else:
+        #     name = './models/MF_POD_model'
+        #     self.model = tf.keras.models.load_model(name) 
 
 
     @compute_time
