@@ -230,7 +230,8 @@ class INetwork(ABC):
                       rwmh_cov: Optional[np.ndarray] = None, 
                       rmwh_scaling: float = 0.1, 
                       rwmh_adaptive: bool = True, 
-                      algo: str = "MH", 
+                      algo: str = "MH",
+                      force_sequential: bool = False,
                       transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray]:
 
         """
@@ -255,6 +256,7 @@ class INetwork(ABC):
         - rwmh_adaptive: Flag for adaptive RWMH.
         - algo: MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
         - transformation: List of transformations to apply.
+        - force_sequential: if True impose a sequential approach to the MCMC algorithm
 
         Returns:
         - estimates: MCMC estimates of the parameters.
@@ -301,13 +303,13 @@ class INetwork(ABC):
         if rwmh_cov is None:
             rwmh_cov = np.eye(len(x_real))
 
-        estimates = MCMC(my_posterior=my_posterior, N=N, burnin=burn_in, n=number_chains, diagnostic=diagnostic, rwmh_cov=rwmh_cov, rmwh_scaling=rmwh_scaling, rwmh_adaptive=rwmh_adaptive, algo=algo, dim=dim)
+        estimates, param_results = MCMC(my_posterior=my_posterior, N=N, burnin=burn_in, n=number_chains, diagnostic=diagnostic, rwmh_cov=rwmh_cov, rmwh_scaling=rmwh_scaling, rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential,dim=dim)
 
         if diagnostic:
             plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
         
         error = np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
-        return estimates, error    
+        return estimates, error, param_results    
 
     @compute_time
     def inverse_cuqi(self,mean_prior: np.ndarray, 
@@ -1115,11 +1117,27 @@ class LSTM_network(INetwork):
 
         return np.array(x), np.array(y)
 
-    def param_inverse(self, mean_prior: np.ndarray, x_data: np.ndarray, cov_prior: Optional[np.ndarray] = None, 
-                      cov_noise: float = 0.1, cov_likelihood: Optional[np.ndarray] = None, y_obs: Optional[np.ndarray] = None, 
-                      x_real: Optional[np.ndarray] = None, number_chains: int = 1, N: int = 1000, burn_in: int = 500, 
-                      levels: int = 1, diagnostic: bool = True, rwmh_cov: Optional[np.ndarray] = None, rmwh_scaling: float = 0.1, 
-                      rwmh_adaptive: bool = True, algo: str = "MH", transformation: List[Any] = [], forward_low_fidelity: Optional[Callable] = None, *args) -> Tuple[np.ndarray, np.ndarray]:
+    def param_inverse(  self, 
+                        mean_prior: np.ndarray, 
+                        x_data: np.ndarray, 
+                        cov_prior: Optional[np.ndarray] = None, 
+                        cov_noise: float = 0.1, 
+                        cov_likelihood: Optional[np.ndarray] = None, 
+                        y_obs: Optional[np.ndarray] = None, 
+                        x_real: Optional[np.ndarray] = None, 
+                        number_chains: int = 1, 
+                        N: int = 1000, 
+                        burn_in: int = 500, 
+                        levels: int = 1, 
+                        diagnostic: bool = True, 
+                        rwmh_cov: Optional[np.ndarray] = None, 
+                        rmwh_scaling: float = 0.1, 
+                        rwmh_adaptive: bool = True, 
+                        algo: str = "MH", 
+                        transformation: List[Any] = [], 
+                        forward_low_fidelity: Optional[Callable] = None, 
+                        force_sequential: bool = False, 
+                        *args) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform parameter inversion using MCMC sampling, potentially utilizing a low fidelity forward model.
 
@@ -1143,6 +1161,7 @@ class LSTM_network(INetwork):
         - algo (str): MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
         - transformation (List[Any]): List of transformations to apply.
         - forward_low_fidelity (Optional[Callable]): Low fidelity forward model function (optional).
+        - force_sequential (bool): True to avoid parallelization  
         - *args: Additional positional arguments used depending on the class with the data of the LSTM model
 
         Returns:
@@ -1174,7 +1193,8 @@ class LSTM_network(INetwork):
             rmwh_scaling=rmwh_scaling, 
             rwmh_adaptive=rwmh_adaptive, 
             algo=algo, 
-            transformation=transformation
+            transformation=transformation,
+            force_sequential = False
         )
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:

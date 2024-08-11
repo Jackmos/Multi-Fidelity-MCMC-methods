@@ -1,0 +1,6 @@
+
+FROM tensorflow/tensorflow:2.7.4
+
+RUN pip install -U tensorboard-plugin-profile
+
+ENTRYPOINT ["tensorboard", "--logdir", "/tmp/tensorboard", "--bind_all"]

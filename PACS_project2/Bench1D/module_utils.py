@@ -105,7 +105,8 @@ def run_simulation(
     burnin: int, 
     n_chains: int, 
     final_model, 
-    algo: str
+    algo: str, 
+    force_sequential:bool=False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Run a simulation to estimate parameters and calculate errors.
@@ -127,7 +128,8 @@ def run_simulation(
     - n_chains: Integer for the number of chains.
     - final_model: The model object with the param_inverse method.
     - algo: String indicating the algorithm to use.
-    
+    - parallel: if True impose a sequential approach to the MCMC algorithm
+
     Returns:
     - best_estimate: The best parameter estimate.
     - best_error: The error corresponding to the best estimate.
@@ -137,7 +139,8 @@ def run_simulation(
     error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
     error = np.zeros(error_shape)
     estimates = np.zeros(error_shape)
-    
+    param_results = []
+
     # Iterate over all combinations of parameters using itertools.product
     for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
         t_eval = np.linspace(0., 5., n).reshape(-1, 1)  # Generate evaluation times
@@ -145,14 +148,14 @@ def run_simulation(
         cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
 
         # Perform parameter estimation and calculate error
-        estimates[i, k, t, j], error[i, k, t, j] = final_model.param_inverse(
+        estimates[i, k, t, j], error[i, k, t, j], param_res = final_model.param_inverse(
             mean_prior, t_eval, max_par=max(datahf[:,1]),cov_prior=cov_prior, rmwh_scaling=r, 
             cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
             x_real=parameters, number_chains=n_chains, N=iterations, 
             burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, algo=algo
+            rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential
         )
-    
+        param_results.append(param_res)
     # Identify the index of the minimum error
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
     best_estimate = estimates[smallest_index]
@@ -163,7 +166,7 @@ def run_simulation(
           f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
           f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
 
-    return best_estimate, best_error
+    return best_estimate, best_error, param_results
 
 
 
@@ -211,6 +214,7 @@ def run_simulation_cuqi(
     # Initialize estimates and error arrays
     estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
     error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
+    param_results = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
 
     # Iterate over noise levels
     for i, noise in enumerate(sd_noise):
@@ -224,7 +228,7 @@ def run_simulation_cuqi(
             for t, s in enumerate(proposal_sd):
 
                 # Perform parameter estimation and calculate error
-                estimates[i, k, t], error[i, k, t] = final_model.inverse_cuqi(
+                estimates[i, k, t], error[i, k, t], params_result[i,k,t] = final_model.inverse_cuqi(
                     mean_prior=mean_prior,
                     x_real=x_real,
                     max_par=max(data["xhf"][:,1]),
@@ -251,7 +255,7 @@ def run_simulation_cuqi(
     print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
           f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
 
-    return best_estimate, best_error
+    return best_estimate, best_error, params_result
 
 
 

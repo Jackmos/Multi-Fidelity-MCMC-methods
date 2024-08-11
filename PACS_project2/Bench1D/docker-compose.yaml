@@ -1,0 +1,20 @@
+
+version: "3.3"
+services:
+  serving:
+    image: tensorflow/serving:2.7.4
+    ports:
+      - '8510:8500'
+      - '8511:8501'
+    environment:
+      - MODEL_NAME=<YOUR_MODEL_NAME>
+    hostname: 'serving'
+    volumes:
+      - '<LOCAL_MODEL_DIR>:/models/<YOUR_MODEL_NAME>/1'
+      - '"dirname" non � riconosciuto come comando interno o esterno,/tf_logs_dir:/tmp/tensorboard'
+  profiler:
+    image: tensorboard_profiler:latest
+    ports:
+      - '6006:6006'
+    volumes:
+      - '"dirname" non � riconosciuto come comando interno o esterno,/tf_logs_dir:/tmp/tensorboard'
