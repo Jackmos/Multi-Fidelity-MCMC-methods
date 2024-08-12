@@ -22,12 +22,16 @@ from BIP_functions import *
 from cuqi.distribution import Uniform, Gaussian,JointDistribution
 from cuqi.sampler import MH
 from cuqi.model import Model as CuqiModel
-from cuqi.geometry import Continuous1D, Discrete
+from cuqi.geometry import Continuous1D, Continuous2D, Discrete
 import re
 import tinyDA as tda
 import optuna
 from keras.src.callbacks.tensorboard import TensorBoard
-
+import dask
+from dask.distributed import Client
+import multiprocessing
+import joblib
+from joblib import parallel_backend
 ############################
 import logging
 
@@ -148,6 +152,7 @@ class INetwork(ABC):
         """
         self.inputs = input_discr
 
+
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
         """
         Prepare input data for prediction.
@@ -174,7 +179,7 @@ class INetwork(ABC):
 
         # Handle inputs and prepare final data for prediction.
         if self.inputs is not None:
-            x_final = np.tile(x_final, (self.inputs.shape[0], 1))          # [0]?
+            x_final = np.tile(x_final, (self.inputs.shape[0], 1))          
         else:
             warning_message = "Inputs are not set."
             warnings.warn(warning_message, UserWarning)
@@ -209,6 +214,8 @@ class INetwork(ABC):
         else:
             raise ValueError("Unsupported number of dimensions for x_final")
         
+
+
         # Perform the prediction and flatten the result
         return self.prediction(concatenated_input).flatten()
 
@@ -292,16 +299,28 @@ class INetwork(ABC):
             y_obs = y_obs.flatten()
 
         if levels > 1:
-            if 'self.model_list' not in locals():
+            if not hasattr(self, 'model_list'):
                 warnings.warn("1 level case considered", UserWarning)
             elif levels > len(self.model_list):
                 warnings.warn("Number of levels is exceeding the number of models", UserWarning)
+            elif levels==2:
+                self.model_list[0].inputs=x_data
+                self.model_list[1].inputs=x_data
+                my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood), tda.GaussianLogLike(y_obs, cov_likelihood)]
+                my_posterior = [tda.Posterior(my_prior, my_loglike[0], self.model_list[0].wrapper_prediction), tda.Posterior(my_prior, my_loglike[1], self.wrapper_prediction)]
             else:
+                for l in range(levels):
+                    self.model_list[i]._set_level(x_data=x_data,prev_steps=self.model_list[0:l],level=l+1)    
+
                 my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood) for _ in range(levels)]
                 my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i].wrapper_prediction) for i in range(levels)]
         else:
             my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
             my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+
+        if levels>1: 
+            for i in range(levels):
+                self.model_list[i].inputs=x_data
 
         if rwmh_cov is None:
             rwmh_cov = np.eye(len(x_real))
@@ -329,7 +348,7 @@ class INetwork(ABC):
                     adapt: bool = False, 
                     scale: float = 0.3, 
                     proposal_sd: float = 0.3, 
-                    x_init: Optional[Union[int, float, np.ndarray]] = None, 
+                    x_init: Optional[Union[int, float, np.ndarray]] = None, #####
                     diagnostic: bool = True, 
                     number_chains: int = 1, 
                     algo: str = "MH", 
@@ -369,9 +388,21 @@ class INetwork(ABC):
 
         # Check if observations are provided
         if y_obs is not None:
-            dim = y_obs.shape[1]
+            dim = y_obs.shape[0] # dim is the number of observation points
+
         else:
             warning_message = "No observation nor data given"
+            warnings.warn(warning_message, UserWarning)
+            return
+
+        if len(y_obs.shape)==1 or y_obs.shape[1]==1:
+            dim_obs=1
+            range_geometry=Continuous1D(dim)
+        elif y_obs.shape[1]==2:
+            dim_obs=2
+            range_geometry=Continuous2D(dim)
+        else:
+            warning_message = "impossible for Cuqipy to manage a problem with 3 or more equations"
             warnings.warn(warning_message, UserWarning)
             return
 
@@ -380,36 +411,27 @@ class INetwork(ABC):
             warning_message = "Number of steps insufficient, smaller or equal than burn-in"
             warnings.warn(warning_message, UserWarning)
             return
-
-        # Initialize x_init if not provided
-        if x_init is None:
-            x_init = np.random.rand(dim)
-        elif isinstance(x_init, (int, float)):
-            x_init = x_init * np.ones(dim)
         
         m = x_real.shape[0]
-        
         # Select algorithm and initialize CuqiModel and Gaussian objects
         if algo == "NUTS":
             fun = Function(self.wrapper_prediction)
-            A = CuqiModel(forward=self.wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(dim))
-            x = Gaussian(mean=mean_prior, cov=cov_prior)
+            A = CuqiModel(forward=self.wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=range_geometry, domain_geometry=Discrete(m))
         else:
-            # A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Continuous1D(dim), domain_geometry=Continuous1D(m))
-            # x = Gaussian(mean=mean_prior, cov=cov_prior)
-            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=Discrete(dim), domain_geometry=Discrete(m))
-            x = Gaussian(mean=mean_prior, cov=cov_prior)
+            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=range_geometry, domain_geometry=Discrete(m))
 
-        y = Gaussian(mean=A(x), cov=proposal_sd)
+        x = Gaussian(mean=mean_prior, cov=cov_prior)
+
+        y = Gaussian(A(x), sqrtcov=proposal_sd)
 
         # Generate or perturb observations
-        if y_obs is None:
+        if y_obs is None:                                   # incoerente con prima riga che da errore... , poi che senso ha definire osservazione a caso... ragiona e se caso elimina
             y_obs = y(x=x_real).sample()
         else:
             y_obs = y_obs + np.random.normal(loc=0., scale=sd_noise, size=y_obs.shape)
 
         # Run MCMC to get estimates
-        estimates = MCMC_cuqi(y, x, y_obs, N, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
+        estimates = MCMC_cuqi(y, x, y_obs, N, m, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
         estimates = np.mean(estimates, axis=1)
 
         # Calculate and print error
@@ -500,6 +522,7 @@ class Neural_Network(INetwork):
         """
         K.clear_session()
         self.name = name
+        self.type="NN"
         self.params = params
         self.N = N
         self.n = n
@@ -509,7 +532,7 @@ class Neural_Network(INetwork):
         self.output_train = output_train
         self.transformations = transformations if transformations is not None else []
         self.inputs = None
-
+        self.level=0
         # Set input and output shapes based on training data dimensions
         self.input_shape = self._get_shape(data_train)
         self.output_shape = self._get_shape(output_train)
@@ -539,7 +562,6 @@ class Neural_Network(INetwork):
             int: The shape of the data.
         """
         return data.shape[1] if data is not None and len(data.shape) > 1 else 1
-
 
     def plot_training_loss(self) -> None:
         """
@@ -610,6 +632,10 @@ class Neural_Network(INetwork):
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
+
+
+        #client = Client(n_workers=multiprocessing.cpu_count(), threads_per_worker=1)
+
         def objective(trial):
             K.clear_session()
             params = {
@@ -624,11 +650,35 @@ class Neural_Network(INetwork):
                 loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
             
             return loss
-
+        logging.getLogger('tensorflow').setLevel(logging.ERROR)
+        tf.get_logger().setLevel('ERROR')
         study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=5, n_jobs=-1)  # Parallelize trials
+        study.optimize(objective, n_trials=5, n_jobs=-1)#, client=client)  # Parallelize trials
         best_params = study.best_params
         return best_params
+
+
+    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
+    #     def objective(trial):
+    #         K.clear_session()
+    #         params = {
+    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
+    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+    #         }
+    #         with tf.device(device):
+    #             loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+    #         return loss
+
+    #     study = optuna.create_study(direction="minimize")
+    #     study.optimize(objective, n_trials=5, n_jobs=-1)
+    #     with parallel_backend('multiprocessing'):
+    #         study.optimize(objective, n_trials=5, n_jobs=-1)
+    #     best_params = study.best_params
+    #     return best_params
+
 
     def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -718,7 +768,23 @@ class Neural_Network(INetwork):
         instance.model = load_model(model_path, custom_objects=custom_objects)
 
         return instance
+    
 
+    def _set_level(self, x_data:np.ndarray, prev_steps:List, level:int=1)-> None:
+        self.level=level
+        self.inputs=x_data 
+        self.prev_steps=prev_steps   # it contains the model_list up to this point
+
+    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
+        x_final = super()._input_wrapper_prediction(x_test, multi_input)
+
+        if self.level >1 :
+
+            for l in range(0,self.level-1):
+                x_final = np.concatenate((x_final, self.prev_steps[l]._wrapper_prediction(x_final, multi_input)), axis=1)
+        
+        return x_final
+    
 class MultiFidelity(INetwork):
         
     def __init__(self, 
@@ -1221,6 +1287,7 @@ class LSTM_network(INetwork):
         prediction_input = self._forward_low_fidelity(x_final=x_final, data_points=self.inputs, *self.input_support)
 
         return prediction_input#self.prediction(prediction_input).flatten()
+        
     
     def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
         """
@@ -1661,11 +1728,6 @@ class Intermediate(INetwork):
 #             dict: Best hyperparameters.
 #         """
 #         pass  # Implement hyperparameter optimization logic here
-
-
-
-
-
 
 
 

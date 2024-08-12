@@ -11,6 +11,7 @@ import tinyDA as tda
 from cuqi.distribution import JointDistribution
 from cuqi.sampler import MH, NUTS, pCN
 
+
 def MCMC(
     my_posterior: List[Any], 
     N: int, 
@@ -21,7 +22,7 @@ def MCMC(
     rmwh_scaling: float = 0.1, 
     period: int = 100, 
     t0: int = 0, 
-    subsampling_rate:Any=1,
+    subsampling_rate: Any = 1,
     rwmh_adaptive: bool = False, 
     algo: str = "MH", 
     dim: int = 0,
@@ -29,26 +30,8 @@ def MCMC(
 ) -> np.ndarray:
     """
     Perform MCMC sampling.
-
-    Args:
-        my_posterior (List[Any]): List of posterior distributions.
-        N (int): Number of samples to draw.
-        burnin (int): Number of burn-in samples to discard.
-        n (int, optional): Number of chains. Defaults to 1.
-        diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
-        rwmh_cov (np.ndarray, optional): Covariance matrix for RW-MH. Defaults to None.
-        rmwh_scaling (float, optional): Scaling factor for RW-MH. Defaults to 0.1.
-        period (int, optional): Adaptation period. Defaults to 100.
-        t0 (int, optional): Initial time step. Defaults to 0.
-        subsampling_rate(List or int,optional): The subsampling rate(s). If running single-level MCMC, this parameter is ignored
-        rwmh_adaptive (bool, optional): Whether to use adaptive RW-MH. Defaults to False.
-        algo (str, optional): MCMC algorithm to use. Defaults to "MH".
-        dim (int, optional): Dimensionality of the problem. Defaults to 0.
-        force_sequential (bool, optional): impose sequential approach or let parallel if ray included
-    Returns:
-        np.ndarray: Array of estimated parameter means.
     """
-    MAP = get_MAP(my_posterior) if dim != 1 else None
+    MAP = get_MAP(my_posterior[-1]) if dim != 1 else None
 
     if algo == "MH":
         my_proposal = GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
@@ -59,47 +42,63 @@ def MCMC(
     elif algo == "DREAMZ":
         my_proposal = DREAMZ(M0=10 * dim, adaptive=rwmh_adaptive, period=period)
     elif algo == "MLDA":
+        if len(my_posterior) <= 2:
+            raise ValueError("MLDA function requires at least 3 posteriors")
         my_proposal = MLDA(
             posteriors=my_posterior, subsampling_rates=[5, 5],
             adaptive_error_model='state-independent', initial_parameters=MAP,
             store_coarse_chain=True, proposal=AdaptiveMetropolis(C0=rwmh_cov)
         )
     else:
-        raise ValueError("Unknown algorithm %s" % algo)
+        raise ValueError(f"Unknown algorithm {algo}")
     
     my_chains = sample(my_posterior, my_proposal, iterations=N, n_chains=n, subsampling_rate=subsampling_rate, force_sequential=force_sequential, initial_parameters=MAP)
-
     
-    idata = to_inference_data(my_chains, burnin=burnin)
-    mean=az.summary(idata)['mean']
+    if len(my_posterior)==1:
+        idata = to_inference_data(my_chains, burnin=burnin)
+    else:
+        idata = to_inference_data(my_chains, level='fine',burnin=burnin)
+
+    mean = az.summary(idata)['mean']
     estimates = np.array(mean)
     print(f"Estimated values are {estimates}")
 
     if diagnostic:
-
         print(az.summary(idata))
 
+        # Plot and save trace
         az.plot_trace(idata)
+        plt.savefig("trace_plot.png")
+        plt.close()
+
         print("----  Autocorrelation  ----")
         az.plot_autocorr(idata)
+        plt.savefig("autocorrelation_plot.png")
+        plt.close()
+
         print("----  Effective Sample Size  ----")
-        az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
-        print("----  Effective Sample Size per iteration  ----")        
-        az.plot_ess(idata,kind='local')        
-        # print("----  Pair Plots  ----")
-        # az.plot_pair(idata)
+        az.plot_ess(idata)
+        plt.savefig("ess_plot.png")
+        plt.close()
+
+        print("----  Effective Sample Size per iteration  ----")
+        az.plot_ess(idata, kind='local')
+        plt.savefig("ess_local_plot.png")
+        plt.close()
+
         print("----  Rank Plots  ----")
         az.plot_rank(idata)
+        plt.savefig("rank_plot.png")
+        plt.close()
 
-
-    return estimates, {'expected_param':mean,'std_dev':az.summary(idata)['sd'], 'ess_bulk': az.summary(idata)['ess_bulk'], 'ess_tail': az.summary(idata)['ess_tail'], 'r_hat':az.summary(idata)['r_hat'] }
-
+    return estimates, {'expected_param': mean, 'std_dev': az.summary(idata)['sd'], 'ess_bulk': az.summary(idata)['ess_bulk'], 'ess_tail': az.summary(idata)['ess_tail'], 'r_hat': az.summary(idata)['r_hat']}
 
 def MCMC_cuqi(
     y: Any, 
     x: Any, 
     observation: np.ndarray, 
     N: int, 
+    m:int,
     burn_in: int, 
     n: int = 1, 
     diagnostic: bool = True, 
@@ -116,6 +115,7 @@ def MCMC_cuqi(
         x (Any): Independent variable.
         observation (np.ndarray): Observed data.
         N (int): Number of samples to draw.
+        m (int): dimension of the QoI
         burn_in (int): Number of burn-in samples to discard.
         n (int, optional): Number of chains. Defaults to 1.
         diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
@@ -127,8 +127,7 @@ def MCMC_cuqi(
     Returns:
         np.ndarray: Array of estimated parameter means.
     """
-    dim = observation.shape[0]
-    x_init = np.random.rand(dim)
+
     estimates = np.empty((1, 0))
     chains = np.empty((0, 1, N - burn_in))
     post = np.empty((1, 0))
@@ -138,14 +137,14 @@ def MCMC_cuqi(
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
-        futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init) for _ in range(n)]
+        futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
         results = ray.get(futures)
         ray.shutdown()
     else:
-        results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init) for _ in range(n)]
+        results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
 
     for result in results:
-        estimates = np.column_stack((estimates, result[0]))
+        estimates = np.column_stack((estimates, result[0])) # non crea problemi per più parametri?
         chains = np.concatenate((chains, result[1]), axis=0)
         post = np.concatenate((post, result[2]), axis=1)
 
@@ -184,6 +183,29 @@ def MCMC_cuqi(
         plt.ylabel('Autocovariance')
         plt.legend()
         plt.show()
+
+
+    # mean=az.summary(idata)['mean']
+    # estimates = np.array(mean)
+    # print(f"Estimated values are {estimates}")
+
+    # if diagnostic:
+
+    #     print(az.summary(idata))
+
+    #     az.plot_trace(idata)
+    #     print("----  Autocorrelation  ----")
+    #     az.plot_autocorr(idata)
+    #     print("----  Effective Sample Size  ----")
+    #     az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
+    #     print("----  Effective Sample Size per iteration  ----")        
+    #     az.plot_ess(idata,kind='local')        
+    #     # print("----  Pair Plots  ----")
+    #     # az.plot_pair(idata)
+    #     print("----  Rank Plots  ----")
+    #     az.plot_rank(idata)
+
+
 
     return estimates
 
@@ -265,7 +287,7 @@ def chain_creation(
     if algo == "NUTS":
         sampler = NUTS(posterior, x0=x_init)
     elif algo == "MH":
-        sampler = MH(posterior, scale=scale) if not adapt else MH(posterior)
+        sampler = MH(posterior, x0=x_init, scale=scale) if adapt else MH(posterior, x0=x_init)
     elif algo == "pCN":
         sampler = pCN(posterior, x0=x_init)
     else:

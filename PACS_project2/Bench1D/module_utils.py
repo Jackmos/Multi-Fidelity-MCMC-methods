@@ -105,7 +105,8 @@ def run_simulation(
     burnin: int, 
     n_chains: int, 
     final_model, 
-    algo: str, 
+    algo: str,
+    levels:int=1, 
     force_sequential:bool=False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -128,7 +129,8 @@ def run_simulation(
     - n_chains: Integer for the number of chains.
     - final_model: The model object with the param_inverse method.
     - algo: String indicating the algorithm to use.
-    - parallel: if True impose a sequential approach to the MCMC algorithm
+    - levels: number of levels of a Multilevel approach
+    - force_sequential: if True impose a sequential approach to the MCMC algorithm
 
     Returns:
     - best_estimate: The best parameter estimate.
@@ -149,11 +151,24 @@ def run_simulation(
 
         # Perform parameter estimation and calculate error
         estimates[i, k, t, j], error[i, k, t, j], param_res = final_model.param_inverse(
-            mean_prior, t_eval, max_par=max(datahf[:,1]),cov_prior=cov_prior, rmwh_scaling=r, 
-            cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-            x_real=parameters, number_chains=n_chains, N=iterations, 
-            burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential
+            mean_prior, 
+            t_eval, 
+            max_par=max(datahf[:,1]),
+            cov_prior=cov_prior, 
+            cov_noise=noise,
+            cov_likelihood=cov_likelihood,
+            y_obs=y_obs,
+            x_real=parameters,
+            number_chains=n_chains,
+            N=iterations,
+            burn_in=burnin,
+            levels=levels, 
+            diagnostic=True, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=r,
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            force_sequential=force_sequential
         )
         param_results.append(param_res)
     # Identify the index of the minimum error
@@ -173,8 +188,8 @@ def run_simulation(
 def run_simulation_cuqi(
     data: dict,
     mean_prior: np.ndarray,
-    x_real: np.ndarray,
-    N: int,
+    parameters: np.ndarray,
+    iterations: int,
     burn_in: int,
     cov_prior: np.ndarray,
     sd_noise: list,
@@ -182,9 +197,9 @@ def run_simulation_cuqi(
     proposal_sd: list,
     number_chains: int,
     algo: str,
-    x_data: np.ndarray,
     n_data: list,
-    final_model,
+    scale: list,
+    fwd_model,
     parallel: bool
 ) -> tuple:
     """
@@ -202,7 +217,6 @@ def run_simulation_cuqi(
         proposal_sd (list): List of proposal standard deviations to evaluate.
         number_chains (int): Number of MCMC chains.
         algo (str): Algorithm to use for MCMC.
-        x_data (np.ndarray): Initial evaluation times.
         n_data (list): List of data sizes to evaluate.
         final_model: Final model object with inverse_cuqi method.
         parallel (bool): Whether to run MCMC chains in parallel.
@@ -212,9 +226,9 @@ def run_simulation_cuqi(
     """
 
     # Initialize estimates and error arrays
-    estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    param_results = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
+    estimates = np.zeros((len(sd_noise), len(n_data), len(scale),len(proposal_sd)))
+    error = np.zeros((len(sd_noise), len(n_data), len(scale), len(proposal_sd)))
+    params_result = []
 
     # Iterate over noise levels
     for i, noise in enumerate(sd_noise):
@@ -222,30 +236,31 @@ def run_simulation_cuqi(
         for k, n in enumerate(n_data):
             # Generate evaluation times
             x_data = np.linspace(0., 5., n).reshape(-1, 1)
-            nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"])
-            
+            nearest_x, y_obs = process_data(data["xhf"], parameters, x_data, data["Yhf"])
+
             # Iterate over proposal standard deviations
             for t, s in enumerate(proposal_sd):
-
-                # Perform parameter estimation and calculate error
-                estimates[i, k, t], error[i, k, t], params_result[i,k,t] = final_model.inverse_cuqi(
-                    mean_prior=mean_prior,
-                    x_real=x_real,
-                    max_par=max(data["xhf"][:,1]),
-                    y_obs=y_obs,
-                    N=N,
-                    burn_in=burn_in,
-                    cov_prior=cov_prior,
-                    sd_noise=noise,  
-                    adapt=adapt,
-                    scale=s,
-                    proposal_sd=s,
-                    number_chains=number_chains,
-                    algo=algo,
-                    x_data=x_data,
-                    parallel=parallel
-                )
+                for r,s_ in enumerate(scale):
+                    # Perform parameter estimation and calculate error
+                    estimates[i, k,r, t], error[i, k,r, t] = fwd_model.inverse_cuqi(
+                        mean_prior=mean_prior,
+                        x_real=parameters,
+                        max_par=max(data["xhf"][:,1]),
+                        y_obs=y_obs,
+                        N=iterations,
+                        burn_in=burn_in,
+                        cov_prior=cov_prior,
+                        sd_noise=noise,  
+                        adapt=adapt,
+                        scale=s_,
+                        proposal_sd=s,
+                        number_chains=number_chains,
+                        algo=algo,
+                        x_data=x_data,
+                        parallel=parallel
+                    )
                 
+                    #params_result.append(par)
     # Find the smallest error and corresponding indices
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
     best_estimate = estimates[smallest_index]
@@ -255,7 +270,7 @@ def run_simulation_cuqi(
     print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
           f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
 
-    return best_estimate, best_error, params_result
+    return best_estimate, best_error#, params_result
 
 
 

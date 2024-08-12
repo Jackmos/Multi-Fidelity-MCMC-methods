@@ -2,14 +2,14 @@ import os
 import sys
 import time
 from functools import wraps
-from contextlib import contextmanager
+import contextlib 
 from typing import Callable, Tuple, Any, Dict, Union
 import numpy as np
 from sklearn.model_selection import KFold
 from joblib import Parallel, delayed
 from tensorflow.keras.optimizers import Adam, Nadam, Adamax, RMSprop
 from tensorflow.keras.models import Model
-
+from module_utils import *
 # Function to load context functions from a specified folder
 def load_context_functions(context_folder: str) -> bool:
     """
@@ -49,23 +49,14 @@ def compute_time(func: Callable) -> Callable:
         return result
     return wrapper
 
-@contextmanager
-def Suppressor() -> None:
-    """
-    Context manager to suppress stdout output using contextlib.
-    Redirects stdout to os.devnull during its context.
-    
-    Usage:
-    with suppress_output():
-        # Code that produces output
-    """
-    original_stdout = sys.stdout
-    try:
-        sys.stdout = open(os.devnull, 'w')
-        yield
-    finally:
-        sys.stdout.close()
-        sys.stdout = original_stdout
+@contextlib.contextmanager
+def Suppressor():
+    try:        
+        with open(os.devnull, 'w', encoding='utf-8') as devnull:
+            with contextlib.redirect_stdout(devnull):                
+                yield
+    finally:        
+        pass
 
 
 # Class to handle a function and compute its Jacobian matrix
