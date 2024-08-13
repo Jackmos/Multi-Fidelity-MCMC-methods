@@ -242,7 +242,7 @@ def run_simulation_cuqi(
             for t, s in enumerate(proposal_sd):
                 for r,s_ in enumerate(scale):
                     # Perform parameter estimation and calculate error
-                    estimates[i, k,r, t], error[i, k,r, t] = fwd_model.inverse_cuqi(
+                    estimates[i, k,r, t], error[i, k,r, t],  par = fwd_model.inverse_cuqi(
                         mean_prior=mean_prior,
                         x_real=parameters,
                         max_par=max(data["xhf"][:,1]),
@@ -260,7 +260,7 @@ def run_simulation_cuqi(
                         parallel=parallel
                     )
                 
-                    #params_result.append(par)
+                    params_result.append(par)
     # Find the smallest error and corresponding indices
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
     best_estimate = estimates[smallest_index]
@@ -270,7 +270,7 @@ def run_simulation_cuqi(
     print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
           f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
 
-    return best_estimate, best_error#, params_result
+    return best_estimate, best_error, params_result
 
 
 

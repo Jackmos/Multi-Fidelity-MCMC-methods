@@ -431,7 +431,7 @@ class INetwork(ABC):
             y_obs = y_obs + np.random.normal(loc=0., scale=sd_noise, size=y_obs.shape)
 
         # Run MCMC to get estimates
-        estimates = MCMC_cuqi(y, x, y_obs, N, m, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
+        estimates,parameters = MCMC_cuqi(y, x, y_obs, N, m, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
         estimates = np.mean(estimates, axis=1)
 
         # Calculate and print error
@@ -442,7 +442,7 @@ class INetwork(ABC):
         if diagnostic:
             plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
 
-        return estimates, error
+        return estimates, error,parameters
 
 
     @abstractmethod
