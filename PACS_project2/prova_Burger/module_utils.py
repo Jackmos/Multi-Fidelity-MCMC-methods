@@ -342,6 +342,7 @@ def run_simulation(datahf_x: np.ndarray,
             cov_prior=cov_prior, 
             rmwh_scaling=r, 
             cov_noise=noise, 
+            max_par=max(datahf[:,1]),
             cov_likelihood=cov_likelihood, 
             y_obs=y_obs, 
             x_real=parameters, 
@@ -354,7 +355,7 @@ def run_simulation(datahf_x: np.ndarray,
             algo=algo, 
             force_sequential=force_sequential,
             forward_low_fidelity=forward_low_fidelity, 
-            x_eval
+            x_eval=x_eval
         )
         param_final.append(par)
     # Identify the index of the minimum error

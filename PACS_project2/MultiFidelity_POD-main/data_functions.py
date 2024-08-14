@@ -2,14 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
 from typing import Tuple, List
-from multifidelity_NN_functions import compute_randomized_SVD, sliding_windows, getOpti, reshape_lstm, create_model, train_model, load_model_LSTM, save_model_LSTM, load_reaction_diffusion
+from multifidelity_NN_functions import compute_randomized_SVD
 import scipy.io
 from celluloid import Camera
 from matplotlib.animation import PillowWriter
 from IPython.display import HTML
 import h5py
 import pickle
-
+from module_utils import *
+sys.path.append('../utils')
+from Structure import *
 class ReactionDiffusionData:
 
     def __init__(self, path: str, tlf_0: float = 0.0, thf_0: float = 0.0, Tlf: float = 80.0, Thf: float = 40.0,
@@ -66,6 +68,9 @@ class ReactionDiffusionData:
         self._load_train_data()
         self._load_test_data()
 
+        self.u_train_POD=None
+        self.u_test_POD=None
+
     def _set_test_parameters(self) -> None:
         """
         Set test parameters based on the size of the dataset.
@@ -108,6 +113,9 @@ class ReactionDiffusionData:
         :return: A tuple representing the number of test parameters and time steps.
         """
         return self.N_mu_test, self.Nt_test
+    
+    def set_n_POD(self, n_POD:int=9)-> None:
+        self.n_POD=n_POD
 
 
     def _load_data(self, params: np.ndarray, fidelity: str, path: str, splitted: bool = False) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -165,41 +173,70 @@ class ReactionDiffusionData:
 
     def visualize_train_data(self) -> None:
         """
-        Visualize training data.
+        Visualize training data for both low-fidelity (u_lf) and high-fidelity (u_hf) data.
+        This function accounts for possible differences in dimensionality between the two datasets.
         """
-        loc = np.arange(0, self.Nx_hf + 1, int(self.Nx_hf / 4))
-        tick = np.arange(0, 21, 5)
+        # Adjust ticks based on the higher fidelity dataset
+        loc_hf = np.arange(0, self.Nx_hf + 1, int(self.Nx_hf / 4))
+        tick_hf = np.arange(0, 21, 5)
         idx_mu_list = [0, int(self.N_mu_train / 2), -1]
 
         # Plot for u_lf
         fig, axes = plt.subplots(1, 3, figsize=(22, 6))
         for i, (ax, idx_mu) in enumerate(zip(axes, idx_mu_list)):
-            surf = ax.imshow(self.u_lf[:, :, -1, idx_mu], origin='lower', aspect='auto')
-            ax.set_xticks(loc)
-            ax.set_xticklabels(tick, fontsize=20)
-            ax.set_yticks(loc)
-            ax.set_yticklabels(tick, fontsize=20)
+            u_lf_data = self.u_lf[:, :, -1, idx_mu]
+
+            # Determine the shape for low-fidelity data
+            Nx_lf = u_lf_data.shape[1]
+            Ny_lf = u_lf_data.shape[0]
+
+            loc_lf = np.arange(0, Nx_lf + 1, int(Nx_lf / 4))
+            tick_lf = np.linspace(0, 20, len(loc_lf))
+
+            # Plotting low-fidelity data
+            surf = ax.imshow(u_lf_data, origin='lower', aspect='auto', cmap='viridis')
+
+            # Set axis ticks and labels for low-fidelity data
+            ax.set_xticks(loc_lf)
+            ax.set_xticklabels(np.round(tick_lf).astype(int), fontsize=20)
+            ax.set_yticks(loc_lf)
+            ax.set_yticklabels(np.round(tick_lf).astype(int), fontsize=20)
+
+            # Set labels and title
             ax.set_xlabel('x', rotation=0, fontsize=22)
             ax.set_ylabel('y', rotation=0, fontsize=22, labelpad=15)
             ax.set_title(f'Low-fidelity \n $\\mu = ${round(self.mu_train[idx_mu], 2)}, $t= ${round(self.t_lf[-1])}', fontsize=22)
+
+            # Add colorbar
             cbar = plt.colorbar(surf, ax=ax)
             cbar.ax.tick_params(labelsize=20, pad=1)
+        
         plt.tight_layout()
         plt.show()
 
         # Plot for u_hf
         fig, axes = plt.subplots(1, 3, figsize=(22, 6))
         for i, (ax, idx_mu) in enumerate(zip(axes, idx_mu_list)):
-            surf = ax.imshow(self.u_hf[:, :, -1, idx_mu], origin='lower', aspect='auto')
-            ax.set_xticks(loc)
-            ax.set_xticklabels(tick, fontsize=20)
-            ax.set_yticks(loc)
-            ax.set_yticklabels(tick, fontsize=20)
+            u_hf_data = self.u_hf[:, :, -1, idx_mu]
+
+            # Plotting high-fidelity data
+            surf = ax.imshow(u_hf_data, origin='lower', aspect='auto', cmap='viridis')
+
+            # Set axis ticks and labels for high-fidelity data
+            ax.set_xticks(loc_hf)
+            ax.set_xticklabels(tick_hf, fontsize=20)
+            ax.set_yticks(loc_hf)
+            ax.set_yticklabels(tick_hf, fontsize=20)
+
+            # Set labels and title
             ax.set_xlabel('x', rotation=0, fontsize=22)
             ax.set_ylabel('y', rotation=0, fontsize=22, labelpad=15)
             ax.set_title(f'High-fidelity \n $\\mu = ${round(self.mu_train[idx_mu], 2)}, $t= ${round(self.t_lf[-1])}', fontsize=22)
+
+            # Add colorbar
             cbar = plt.colorbar(surf, ax=ax)
             cbar.ax.tick_params(labelsize=20, pad=1)
+        
         plt.tight_layout()
         plt.show()
 
@@ -219,38 +256,49 @@ class ReactionDiffusionData:
         self.N = self.Nx_hf * self.Ny_hf
     
 
-    def _import_uLF_POD_evaluation(self, filenames:List[str]=None) -> None:
-        # assumendo che non cambia nel momento in cui definisci LSTM
+    def _import_uLF_POD_evaluation(self, foldername:str=None) -> None:
 
+        list_models = [f"{foldername}{i}.keras" for i in range(1, self.n_POD + 1)]
 
-        for i in len(filenames):
+        for models in list_models:
             
-            mod=NetworkFactory.build_network(network_type="LSTM")
-            mod.load(filenames[i])
+            mod=NetworkFactory.build_network(network_type="LSTM_support")
+            mod.load(models)
             self.fwd_uLF.append(mod)
 
 
 
-    def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, LSTM_list: List[str]) -> np.ndarray:
+    def _forward_low_fidelity(self, x_final: np.ndarray, data_points: np.ndarray, fwd_LSTM_folder: str) -> np.ndarray:
         """
         Generate low fidelity model using POD basis.
         Useful for BIP 
 
         Parameters:
-        - x_final (np.ndarray): Final input data.
-        - data_points (np.ndarray): Data points to project onto the POD basis.
-        - LSTM_list (List[dict]): List containing the LSTM model and its parameters.
+        - x_final (np.ndarray): Final input data, parameter \mu.
+        - data_points (np.ndarray): Data points, in this specific case time instants.
+        - fwd_LSTM_folder (str): name of the folder and files with collection of LSTM models with the relation (mu,t)->u_LF_POD
         Returns:
         - new_inputs (np.ndarray): New input data incorporating low fidelity model.
         """
         
         if not self.fwd_uLF:
-            self._import_uLF_POD_evaluation(LSTM_list)
+            self._import_uLF_POD_evaluation(fwd_LSTM_folder)
             
-        data_norm=self.normalize(data_points)# completa con self. tmax, self.t min
-        #predicition con struttura adatta per mettere tutto assieme
+        data_norm=normalization(data_points, self.Thf,0.)# completa con self. tmax, self.t min
+        x_result=normalization(x_final, self.mu_1, self.mu_0)
+
+        domain =np.concatenate((x_result, data_norm),axis=1)  # (\mu,t)
+        domain=domain.reshape(1,domain.shape[0], domain.shape[1]) 
+        # check dimensione 
+        x_final=domain[:, :, [1, 0]]
+        x_final[:,:,0]=denormalization(x_final[:,:,0], self.Thf,0.)
+        x_final[:,:,1]=denormalization(x_final[:,:,1], self.mu_1, self.mu_0)
         
-        return new_inputs
+        for l in range(self.n_POD):
+            x_final=np.concatenate((x_final, denormalization(self.fwd_uLF[l].prediction(domain),np.max(self.u_train_POD[l]),np.min(self.u_train_POD[l]))),axis=2)    # denormalized with u_LF because bigger set 
+        
+
+        return x_final
 
 
 
@@ -277,8 +325,10 @@ class ReactionDiffusionData:
         """
         u_pod = np.reshape(u_data, (self.N, self.Nt_train * self.N_mu_train), 'F')
         u_train = u_pod.T @ POM_u
-        return np.reshape(u_train, (self.N_mu_train, self.Nt_train, -1))
+        self.u_train_POD=np.reshape(u_train, (self.N_mu_train, self.Nt_train, -1))
 
+        return self.u_train_POD
+    
     def project_onto_POD_test(self, POM_u: np.ndarray, u_data: np.ndarray) -> np.ndarray:
         """
         Project test data onto the POD basis.
@@ -289,7 +339,8 @@ class ReactionDiffusionData:
         """
         u_pod = np.reshape(u_data, (self.N, self.Nt_test * self.N_mu_test), 'F')
         u_test = u_pod.T @ POM_u
-        return np.reshape(u_test, (self.N_mu_test, self.Nt_test, -1))
+        self.u_test_POD=np.reshape(u_test, (self.N_mu_test, self.Nt_test, -1))
+        return self.u_test_POD
 
     def plot_POD_coefficients(self, ulf_train: np.ndarray, uhf_train: np.ndarray, n_POD: int) -> None:
         """

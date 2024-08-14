@@ -530,7 +530,7 @@ def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
 def run_simulation( 
                    datahf: np.ndarray, 
                    mean_prior: np.ndarray, 
-                   LSTM_list: List[str],
+                   fwd_LSTM_folder: str,
                    cov_prior: np.ndarray, 
                    Yhf: np.ndarray, 
                    sigma_noise: List[float], 
@@ -545,7 +545,10 @@ def run_simulation(
                    n_chains: int, 
                    final_model: Any, 
                    algo: str, 
-                   forward_low_fidelity: Optional[Callable] = None
+                   levels:int=1, 
+                   forward_low_fidelity: Optional[Callable] = None,
+                   force_sequential:bool=False
+
                    ) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
     """
     Run a simulation to estimate parameters and calculate errors.
@@ -553,7 +556,7 @@ def run_simulation(
     Parameters:
     - datahf (np.ndarray): 2D array containing data  (t and parameter).
     - mean_prior (np.ndarray): 1D array for the mean of the prior.
-    - LSTM_list(List[str]): collection of LSTM models with the relation (t,mu)->u_LF_POD
+    - fwd_LSTM_folder (str): name of the folder and files with collection of LSTM models with the relation (mu,t)->u_LF_POD
     - cov_prior (np.ndarray): 2D array for the covariance of the prior.
     - Yhf (np.ndarray): 1D array of observed values.
     - sigma_noise (List[float]): List of noise levels.
@@ -568,6 +571,7 @@ def run_simulation(
     - n_chains (int): Integer for the number of chains.
     - final_model (Any): The model object with the param_inverse method.
     - algo (str): String indicating the algorithm to use.
+    - levels: number of levels of a Multilevel approach
     - force_sequenntial (bool): True to avoid parallelization
     - forward_low_fidelity (Optional[Callable]): Low fidelity forward model function (optional).
     
@@ -594,6 +598,7 @@ def run_simulation(
         estimates[i, k,t, j], error[i, k, t, j], param_final = final_model.param_inverse(
             mean_prior=mean_prior, 
             x_data=t_eval, 
+            max_par=max(datahf[:,1]),
             cov_prior=cov_prior, 
             rmwh_scaling=r, 
             cov_noise=noise, 
@@ -603,12 +608,15 @@ def run_simulation(
             number_chains=n_chains, 
             N=iterations, 
             burn_in=burnin, 
+            levels=levels, 
             diagnostic=True, 
             rwmh_cov=rwmh_cov, 
             rwmh_adaptive=rwmh_adaptive, 
             algo=algo, 
             forward_low_fidelity=forward_low_fidelity,
-            LSTM_list
+            force_sequential=force_sequential,
+            fwd_LSTM_folder=fwd_LSTM_folder
+
         )
     
     # Identify the index of the minimum error

@@ -59,6 +59,7 @@ class NetworkType(Enum):
     LSTM_SUPPORT="LSTM_support"
     STEP = "step"
 
+
 # Factory class to build different types of networks based on the provided type.
 class NetworkFactory:
 
@@ -126,9 +127,15 @@ class NetworkFactory:
             return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose, device=device)
         
         elif network_type_enum == NetworkType.LSTM or network_type_enum==NetworkType.LSTM_SUPPORT:
-            return LSTM_network(network_type,params, data_train, output_train, N, train, do_HPO, verbose, device=device)
+            return LSTM_network(name=network_type,params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
 
         raise ValueError(f"Invalid network type: {network_type}")
+
+
+
+                     
+
+
 
 
 # Abstract base class for network-related operations.
@@ -151,6 +158,10 @@ class INetwork(ABC):
             input_discr (Any): The input discriminator.
         """
         self.inputs = input_discr
+
+    def set_train_sets(self, data_train,  output_train )->None:
+        self.data_train = data_train
+        self.output_train = output_train
 
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
@@ -207,14 +218,16 @@ class INetwork(ABC):
         if x_final.ndim == 2:
             # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
             concatenated_input = np.concatenate((self.inputs, x_final), axis=1)
-        elif x_final.ndim == 3:
-            # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
-            inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
-            concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
+        # elif x_final.ndim == 3:                                                               # commente 13-8-24, for reactionPOD
+        #     # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
+        #     inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
+        #     concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
+        # else:
+        #     raise ValueError("Unsupported number of dimensions for x_final")
+        elif x_final.ndim==3:
+            concatenated_input=x_final
         else:
-            raise ValueError("Unsupported number of dimensions for x_final")
-        
-
+             raise ValueError("Unsupported number of dimensions for x_final")
 
         # Perform the prediction and flatten the result
         return self.prediction(concatenated_input).flatten()
@@ -445,6 +458,7 @@ class INetwork(ABC):
         return estimates, error,parameters
 
 
+
     @abstractmethod
     def prediction(self) -> None:
         """
@@ -485,6 +499,7 @@ class INetwork(ABC):
         Subclasses must provide the implementation for this method.
         """
         pass
+
 
 
 class Neural_Network(INetwork):
@@ -620,7 +635,6 @@ class Neural_Network(INetwork):
             with Suppressor():
                 return self.model.predict(x_test)
 
-
     def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
         """
         Performs hyperparameter optimization using Bayesian optimization.
@@ -633,30 +647,102 @@ class Neural_Network(INetwork):
             Dict[str, Any]: The best hyperparameters found.
         """
 
-
-        #client = Client(n_workers=multiprocessing.cpu_count(), threads_per_worker=1)
-
         def objective(trial):
             K.clear_session()
+            tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial
+            
             params = {
                 "nodes": trial.suggest_int("nodes", 4, 64, log=True),
-                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
-                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
+                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+                "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
                 "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
                 "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
-
             }
+
             with tf.device(device):
-                loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-            
+                # loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+                loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
+
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
+
         study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=5, n_jobs=-1)#, client=client)  # Parallelize trials
+        # Use n_jobs=2 since it is stable on your system
+        study.optimize(objective, n_trials=5, n_jobs=1)
+        
         best_params = study.best_params
         return best_params
+    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
+    #     """
+    #     Performs hyperparameter optimization using Bayesian optimization.
 
+    #     Args:
+    #         data_train (np.ndarray): Training data.
+    #         output_train (np.ndarray): Training outputs.
+
+    #     Returns:
+    #         Dict[str, Any]: The best hyperparameters found.
+    #     """
+
+
+    #     #client = Client(n_workers=multiprocessing.cpu_count(), threads_per_worker=1)
+
+    #     def objective(trial):
+    #         K.clear_session()
+    #         params = {
+    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
+    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
+    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+
+    #         }
+    #         #with tf.device(device):
+    #         loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+            
+    #         return loss
+    #     #logging.getLogger('tensorflow').setLevel(logging.ERROR)
+    #     #tf.get_logger().setLevel('ERROR')
+    #     study = optuna.create_study(direction="minimize")
+    #     study.optimize(objective, n_trials=5, n_jobs=3)#, client=client)  # Parallelize trials
+    #     best_params = study.best_params
+    #     return best_params
+
+
+
+    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
+    #     """
+    #     Performs hyperparameter optimization using Bayesian optimization.
+
+    #     Args:
+    #         data_train (np.ndarray): Training data.
+    #         output_train (np.ndarray): Training outputs.
+
+    #     Returns:
+    #         Dict[str, Any]: The best hyperparameters found.
+    #     """
+    #     def objective(trial):
+    #         K.clear_session()
+    #         params = {
+    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
+    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
+    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
+    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
+    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
+    #         }
+    #         with tf.device(device):
+    #             model = getModel(params, self.input_shape, self.name, self.output_shape)
+    #             #model.compile(loss="mean_squared_error", optimizer=params["opt"])
+    #             score = kCrossVal(self.n, self.N, data_train, output_train, model, self.name, self.input_shape, self.output_shape)
+    #         return -score  # Maximize the score
+
+    #     logging.getLogger('tensorflow').setLevel(logging.ERROR)
+    #     tf.get_logger().setLevel('ERROR')
+    #     study = optuna.create_study(direction="maximize")
+    #     study.optimize(objective, n_trials=5, n_jobs=-1)
+    #     best_params = study.best_params
+    #     return best_params
 
     # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
     #     def objective(trial):
@@ -671,15 +757,17 @@ class Neural_Network(INetwork):
     #         with tf.device(device):
     #             loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
     #         return loss
-
+        
+    #     logging.getLogger('tensorflow').setLevel(logging.ERROR)
+    #     tf.get_logger().setLevel('ERROR')
     #     study = optuna.create_study(direction="minimize")
     #     study.optimize(objective, n_trials=5, n_jobs=-1)
-    #     with parallel_backend('multiprocessing'):
-    #         study.optimize(objective, n_trials=5, n_jobs=-1)
+    #     # with parallel_backend('multiprocessing'):
+    #     #     study.optimize(objective, n_trials=5, n_jobs=-1)
     #     best_params = study.best_params
     #     return best_params
 
-
+# delete
     def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Objective function to minimize during hyperparameter optimization.
@@ -997,6 +1085,8 @@ class LSTM_network(INetwork):
                  data_train: Optional[np.ndarray] = None, 
                  output_train: Optional[np.ndarray] = None, 
                  N: int = 1000, 
+                 dim_input:int=0,
+                 dim_output:int=0,
                  train: bool = True, 
                  do_HPO: bool = False, 
                  transformations: List[Any] = [], 
@@ -1009,6 +1099,8 @@ class LSTM_network(INetwork):
             data_train (Optional[np.ndarray]): Training data.
             output_train (Optional[np.ndarray]): Training outputs.
             N (int): Number of epochs for training.
+            dim_input:int=0,
+            dim_output:int=0,
             train (bool): Flag to indicate if training should be performed.
             do_HPO (bool): Flag to indicate if hyperparameter optimization is to be performed.
             transformations (List[Any]): List of transformations to apply to the data.
@@ -1024,7 +1116,6 @@ class LSTM_network(INetwork):
         self.data_train = data_train
         self.output_train = output_train
         self.transformations = transformations
-
         self.input_shape = 1
         self.output_shape = 1
         self.inputs = None
@@ -1032,25 +1123,45 @@ class LSTM_network(INetwork):
         # Determine input and output shapes
         if data_train is not None and len(data_train.shape) > 1:
             self.input_shape = data_train.shape[-1]
+        elif dim_input>1:
+            self.input_shape = dim_input
+
         if output_train is not None and len(output_train.shape) > 1:
             self.output_shape = output_train.shape[-1]
+        elif dim_output>1:
+            self.output_shape = dim_output
 
-        # Perform hyperparameter optimization if required
-        if do_HPO or params is None:
-            if output_train is None or data_train is None:
+        if data_train is None or output_train is None:
+            train = False
+
+
+        # Perform hyperparameter optimization if required       
+        if self.params is None and train:
                 warnings.warn("Not enough data given!", UserWarning)
+            
+        if do_HPO:
             self.params = self.HPO(data_train, output_train,device=device)
-
+        # if do_HPO or params is None:
+        #     if output_train is None or data_train is None:
+        #         warnings.warn("Not enough data given!", UserWarning)
+        #     self.params = self.HPO(data_train, output_train,device=device)
+        
         # Initialize the model
-        self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
+        if self.params is not None:
+            self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
 
-        # Train the model if required
-        if train: 
-            self.hist = self.training(int(params['sequence_length']),int(params['sequence_freq']),epoch=self.N,device=device) 
-            self.plot_training_loss()
-        # else:
-        #     name = './models/MF_POD_model'
-        #     self.model = tf.keras.models.load_model(name) 
+            # Train the model if required
+            if train: 
+                self.hist = self.training(int(self.params['sequence_length']),int(self.params['sequence_freq']),epoch=self.N,device=device) 
+                self.plot_training_loss()
+
+        else: 
+            print(f"class instance {self.name} created, load a keras model")
+
+        # if no params, no dataset, no HPO, then you must load
+
+    def set_parameters(self, params: Optional[dict] )->None:
+        self.params=params
 
 
     @compute_time
@@ -1162,6 +1273,9 @@ class LSTM_network(INetwork):
             file_path (str): The path from where the model will be loaded. 
         """ 
         self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
+        self.input_shape=self.model.inputs[0][-1]
+        self.output_shape=self.model.outputs[0][-1]
+
         print(f"Model loaded from {file_path}")
 
     def _sliding_windows(self, data_input, data_output, seq_length, freq=1):
@@ -1191,7 +1305,8 @@ class LSTM_network(INetwork):
 
     def param_inverse(  self, 
                         mean_prior: np.ndarray, 
-                        x_data: np.ndarray, 
+                        x_data: np.ndarray,
+                        max_par:float, 
                         cov_prior: Optional[np.ndarray] = None, 
                         cov_noise: float = 0.1, 
                         cov_likelihood: Optional[np.ndarray] = None, 
@@ -1209,7 +1324,7 @@ class LSTM_network(INetwork):
                         transformation: List[Any] = [], 
                         forward_low_fidelity: Optional[Callable] = None, 
                         force_sequential: bool = False, 
-                        *args) -> Tuple[np.ndarray, np.ndarray]:
+                        **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform parameter inversion using MCMC sampling, potentially utilizing a low fidelity forward model.
 
@@ -1244,13 +1359,14 @@ class LSTM_network(INetwork):
         if forward_low_fidelity is None or not callable(forward_low_fidelity):
             raise KeyError("Provide forward_low_fidelity related to the class of the problem. It must be a callable function")
 
-        self.input_support = args
+        self.input_support = next(iter(kwargs.values()))
         # Store the forward_low_fidelity function for later use
         self._forward_low_fidelity = forward_low_fidelity
         # Call the parent class's param_inverse method with the provided parameters
         return super().param_inverse(
             mean_prior=mean_prior, 
             x_data=x_data, 
+            max_par=max_par,
             cov_prior=cov_prior, 
             cov_noise=cov_noise, 
             cov_likelihood=cov_likelihood, 
@@ -1266,7 +1382,7 @@ class LSTM_network(INetwork):
             rwmh_adaptive=rwmh_adaptive, 
             algo=algo, 
             transformation=transformation,
-            force_sequential = False
+            force_sequential = force_sequential
         )
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
@@ -1284,7 +1400,7 @@ class LSTM_network(INetwork):
         x_final = super()._input_wrapper_prediction(x_test, multi_input)
 
         # Apply forward low-fidelity modeling to the wrapped input
-        prediction_input = self._forward_low_fidelity(x_final=x_final, data_points=self.inputs, *self.input_support)
+        prediction_input = self._forward_low_fidelity(x_final, self.inputs, self.input_support)
 
         return prediction_input#self.prediction(prediction_input).flatten()
         

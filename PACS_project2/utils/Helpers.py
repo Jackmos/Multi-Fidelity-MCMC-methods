@@ -10,6 +10,7 @@ from joblib import Parallel, delayed
 from tensorflow.keras.optimizers import Adam, Nadam, Adamax, RMSprop
 from tensorflow.keras.models import Model
 from module_utils import *
+from Structure import *
 # Function to load context functions from a specified folder
 def load_context_functions(context_folder: str) -> bool:
     """
@@ -216,7 +217,7 @@ def kCrossVal(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str,
     return np.mean(scores)
 
 def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
-                    name: str, input_shape: int) -> float:
+                    name: str, input_shape: int, output_shape:int) -> float:
     """
     Perform k-fold cross-validation on the model with a single fold.
 
@@ -239,7 +240,7 @@ def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dic
         x_train, x_val = x[train_index], x[test_index]
         y_train, y_val = y[train_index], y[test_index]
 
-        model = getModel(params, input_shape, name, y.shape[1])
+        model = getModel(params, input_shape, name, output_shape)
         model.fit(x_train, y_train, epochs=Nepo, batch_size=len(train_index), verbose=0)  # Optimization: Efficient model training
         predictions = model.predict(x_val)
         score = np.mean(np.square(y_val - predictions))  # Optimization: Efficient calculation of the score
@@ -289,7 +290,7 @@ def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray,
 
 
 def kCrossVal_parallel(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
-                       name: str, input_shape: int, output_shape: int, p: int = 1, n_jobs: int = -1) -> float:
+                       name: str, input_shape: int, output_shape: int, p: int = 2, n_jobs: int = -1) -> float:
     """
     Perform k-fold cross-validation on the model using parallel processing.
 

@@ -108,7 +108,7 @@ def run_simulation(
     algo: str,
     levels:int=1, 
     force_sequential:bool=False
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
     """
     Run a simulation to estimate parameters and calculate errors.
     
@@ -135,6 +135,8 @@ def run_simulation(
     Returns:
     - best_estimate: The best parameter estimate.
     - best_error: The error corresponding to the best estimate.
+    - param_final (List[dict]): list of parameter of MCMC algorithm  
+
     """
     
     # Initialize error and estimate arrays

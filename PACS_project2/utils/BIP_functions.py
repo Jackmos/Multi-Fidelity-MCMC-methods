@@ -81,6 +81,8 @@ def MCMC(
     if diagnostic:
         print(summary)
 
+        az.plot_trace(idata)
+        plt.show()
         # Save diagnostic plots
         az.plot_trace(idata)
         plt.savefig(os.path.join(folder_name, "trace_plot.png"))
