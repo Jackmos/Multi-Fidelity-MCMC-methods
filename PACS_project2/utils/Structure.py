@@ -124,16 +124,12 @@ class NetworkFactory:
             return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device, profiler=profiler)
         
         elif network_type_enum == NetworkType.INTER:
-            return Intermediate(params, data_train, output_train, N, n, train, do_HPO, verbose, device=device)
+            return Intermediate(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, n=n, train=train, do_HPO=do_HPO, device=device)
         
         elif network_type_enum == NetworkType.LSTM or network_type_enum==NetworkType.LSTM_SUPPORT:
             return LSTM_network(name=network_type,params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
 
         raise ValueError(f"Invalid network type: {network_type}")
-
-
-
-                     
 
 
 
@@ -218,16 +214,16 @@ class INetwork(ABC):
         if x_final.ndim == 2:
             # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
             concatenated_input = np.concatenate((self.inputs, x_final), axis=1)
-        # elif x_final.ndim == 3:                                                               # commente 13-8-24, for reactionPOD
-        #     # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
-        #     inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
-        #     concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
-        # else:
-        #     raise ValueError("Unsupported number of dimensions for x_final")
-        elif x_final.ndim==3:
-            concatenated_input=x_final
+        elif x_final.ndim == 3:                                                               # commente 13-8-24, for reactionPOD
+            # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
+            inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
+            concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
         else:
-             raise ValueError("Unsupported number of dimensions for x_final")
+            raise ValueError("Unsupported number of dimensions for x_final")
+        # elif x_final.ndim==3:
+        #     concatenated_input=x_final
+        # else:
+        #      raise ValueError("Unsupported number of dimensions for x_final")
 
         # Perform the prediction and flatten the result
         return self.prediction(concatenated_input).flatten()
@@ -457,7 +453,28 @@ class INetwork(ABC):
 
         return estimates, error,parameters
 
+    @staticmethod
+    def save(self, file_path: str) -> None: 
+        """ 
+        Save the trained LSTM model to a file. 
+        Args: 
+            file_path (str): The path where the model will be saved. 
+        """ 
+        self.model.save(file_path) 
+        print(f"Model saved to {file_path}") 
 
+    @staticmethod
+    def load(self, file_path: str) -> None: 
+        """ 
+        Load a trained LSTM model from a file. 
+        Args: 
+            file_path (str): The path from where the model will be loaded. 
+        """ 
+        self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
+        self.input_shape=self.model.inputs[0][-1]
+        self.output_shape=self.model.outputs[0][-1]
+
+        print(f"Model loaded from {file_path}")
 
     @abstractmethod
     def prediction(self) -> None:
@@ -491,14 +508,6 @@ class INetwork(ABC):
         """
         pass
 
-    @staticmethod
-    @abstractmethod
-    def save() -> None:
-        """
-        Abstract static method to be implemented for saving the network's state or model.
-        Subclasses must provide the implementation for this method.
-        """
-        pass
 
 
 
@@ -646,7 +655,7 @@ class Neural_Network(INetwork):
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
-
+        print("HPO name ", self.name )
         def objective(trial):
             K.clear_session()
             tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial
@@ -660,16 +669,16 @@ class Neural_Network(INetwork):
             }
 
             with tf.device(device):
-                # loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+                #loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
                 loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
 
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
-
-        study = optuna.create_study(direction="minimize")
+        storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study.db'
+        study = optuna.create_study(direction="minimize",storage=storage)
         # Use n_jobs=2 since it is stable on your system
-        study.optimize(objective, n_trials=5, n_jobs=1)
+        study.optimize(objective, n_trials=4, n_jobs=-1)
         
         best_params = study.best_params
         return best_params
@@ -874,7 +883,7 @@ class Neural_Network(INetwork):
         return x_final
     
 class MultiFidelity(INetwork):
-        
+        # REMARK: IN MULTIFIDELITY NN C'è LA POSSIBILTIà DI NON FARE TRAINING 
     def __init__(self, 
                  names: List[str], 
                  params: Optional[List[dict]] = None, 
@@ -891,7 +900,7 @@ class MultiFidelity(INetwork):
         Args:
             names (List[str]): Names of the networks.
             params (Optional[List[dict]]): Parameters for each network.
-            data_train (Optional[List[np.ndarray]]): Training data for each network.
+            data_train (Optional[List[np.ndarray]]): Training data for the networks.
             output_train (Optional[List[np.ndarray]]): Training outputs for each network.
             N (Optional[List[int]]): Number of epochs for each network.
             n (Optional[List[int]]): Batch sizes for each network.
@@ -909,7 +918,7 @@ class MultiFidelity(INetwork):
         self.transformations = []
         self.input_shape = 1
         self.output_shape = 1
-
+       
         if not data_train or not output_train or len(data_train) != len(output_train):
             raise ValueError('The data are incoherent or insufficient')
 
@@ -925,15 +934,16 @@ class MultiFidelity(INetwork):
         elif len(params) < len(names):
             params += [None] * (len(names) - len(params))
 
-        count = 1
+        #count = 1
+        data_train_support=data_train[0]
         for index, name in enumerate(names):
             model = NetworkFactory.build_network(
                 name,
                 params=params[index],
-                data_train=data_train[count - 1],
-                output_train=output_train[count - 1],
+                data_train=data_train_support, #[count - 1],
+                output_train=output_train[index],#][count - 1],
                 N=self.Ns[index],
-                n=self.ns[count - 1],
+                n=self.ns[index],#[count - 1],
                 train=True,
                 do_HPO=do_HPO,
                 verbose=verbose,
@@ -941,12 +951,17 @@ class MultiFidelity(INetwork):
                 profiler=profiler
             )
             self.model_list.append(model)
-            
-            if (index + 1) == (self.steps - 1) * (count - 1) + 1:
-                count += 1
 
-            for i in range(count - 1, len(data_train)):
-                data_train[i] = np.c_[data_train[i], model.prediction(data_train[i])]
+            if (index+1)<len(data_train):
+
+                data_train_support=data_train[index+1]
+
+                for l in range(index+1):
+                    data_train_support=np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
+            # if (index + 1) == (self.steps - 1) * (count - 1) + 1:
+            #     count += 1
+            # for i in range(count - 1, len(data_train)):
+            #     data_train[i] = np.c_[data_train[i], model.prediction(data_train[i])]
 
 
     def plot_training_loss(self) -> None:
@@ -1257,26 +1272,26 @@ class LSTM_network(INetwork):
 
         return test_mse, r2
 
-    def save(self, file_path: str) -> None: 
-        """ 
-        Save the trained LSTM model to a file. 
-        Args: 
-            file_path (str): The path where the model will be saved. 
-        """ 
-        self.model.save(file_path) 
-        print(f"Model saved to {file_path}") 
+    # def save(self, file_path: str) -> None: 
+    #     """ 
+    #     Save the trained LSTM model to a file. 
+    #     Args: 
+    #         file_path (str): The path where the model will be saved. 
+    #     """ 
+    #     self.model.save(file_path) 
+    #     print(f"Model saved to {file_path}") 
  
-    def load(self, file_path: str) -> None: 
-        """ 
-        Load a trained LSTM model from a file. 
-        Args: 
-            file_path (str): The path from where the model will be loaded. 
-        """ 
-        self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
-        self.input_shape=self.model.inputs[0][-1]
-        self.output_shape=self.model.outputs[0][-1]
+    # def load(self, file_path: str) -> None: 
+    #     """ 
+    #     Load a trained LSTM model from a file. 
+    #     Args: 
+    #         file_path (str): The path from where the model will be loaded. 
+    #     """ 
+    #     self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
+    #     self.input_shape=self.model.inputs[0][-1]
+    #     self.output_shape=self.model.outputs[0][-1]
 
-        print(f"Model loaded from {file_path}")
+    #     print(f"Model loaded from {file_path}")
 
     def _sliding_windows(self, data_input, data_output, seq_length, freq=1):
         """
@@ -1450,9 +1465,11 @@ class Intermediate(INetwork):
                  output_train: Optional[np.ndarray] = None, 
                  N: int = 1000, 
                  n: int = 10, 
+                 dim_input:int=0,
+                 dim_output:int=0,
                  train: bool = True, 
                  do_HPO: bool = False, 
-                 transformations: Optional[list] = None, 
+                 transformations: List[Any] = [], 
                  verbose: bool = False,
                  device:str ='/CPU:0'):
         """
@@ -1470,7 +1487,6 @@ class Intermediate(INetwork):
             transformations (Optional[list]): List of transformations to apply to the data.
             verbose (bool): Whether to print verbose output.
         """
-        K.clear_session()
         self.name = name
         self.params = params
         self.N = N
@@ -1479,7 +1495,10 @@ class Intermediate(INetwork):
         self.hist = None
         self.data_train = data_train
         self.output_train = output_train
-        self.transformations = transformations if transformations is not None else []
+        self.input_shape = 1
+        self.output_shape = 1
+        self.inputs = None
+        self.transformations = transformations
 
         # Validate and concatenate data
         if data_train is None or output_train is None or len(data_train) != 2 or len(output_train) != 2:
@@ -1531,22 +1550,28 @@ class Intermediate(INetwork):
             warnings.warn("No training history or 'loss' key found.", UserWarning)
 
     @compute_time
-    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int,device: str = '/CPU:0') -> Any:
+    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int, device: str = '/CPU:0', callbacks: TensorBoard=None) -> Any:
         """
-        Train the model on the given data.
-
+        Trains the model on the given data.
+        
         Args:
             x (np.ndarray): Training data.
-            y (np.ndarray): Training labels.
-            epoch (int): Number of epochs.
-            batch (int): Batch size.
+            y (np.ndarray): Training outputs.
+            epoch (int): Number of epochs for training.
+            batch (int): Batch size for training.
 
         Returns:
-            Any: Training history.
+            Any: The training history.
         """
-        with tf.device(device):
-            self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
-    
+        if callbacks is not None:
+            with tf.device(device):
+
+                self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0, callbacks=[callbacks])
+        else:
+            with tf.device(device):
+
+                self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
+        
         return self.hist
     
     def prediction(self, x_test: np.ndarray) -> np.ndarray:
@@ -1567,27 +1592,29 @@ class Intermediate(INetwork):
 
     def performance(self, data_test: np.ndarray, output_test: np.ndarray) -> Tuple[float, float]:
         """
-        Evaluate the performance of the model.
+        Evaluate the performance of the model on test data.
 
         Args:
             data_test (np.ndarray): Test data.
-            output_test (np.ndarray): Test labels.
+            output_test (np.ndarray): Expected output data.
 
         Returns:
-            Tuple[float, float]: Test MSE and R^2 score.
+            Tuple[float, float]: Test Mean Squared Error (MSE) and R^2 score.
         """
         pred = self.prediction(data_test)
 
         if len(output_test.shape) < len(pred.shape):
-            output_test = output_test[:, np.newaxis]
-
+            output_test = output_test[:, _]
+        
         test_mse = np.mean(np.square(output_test - pred))
         print(f"Test MSE: {test_mse}")
 
-        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
+        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(
+            np.square(output_test - np.mean(output_test))
+        )
         print(f"R^2: {r2}")
         
-        return test_mse, r2
+        return test_mse, r2   
 
     def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1603,19 +1630,22 @@ class Intermediate(INetwork):
         loss = kCrossVal(self.n, self.N, self.data_train, self.output_train, params, self.name, self.input_shape, self.output_shape)
         return {"loss": loss, "params": params, "status": STATUS_OK}
 
-    def HPO(self, data_train: np.ndarray, output_train: np.ndarray,device: str = '/CPU:0') -> Dict[str, Any]:
+    def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
         """
-        Hyperparameter Optimization (HPO) using Bayesian optimization.
+        Performs hyperparameter optimization using Bayesian optimization.
 
         Args:
             data_train (np.ndarray): Training data.
-            output_train (np.ndarray): Training labels.
+            output_train (np.ndarray): Training outputs.
 
         Returns:
-            Dict[str, Any]: Best hyperparameters.
+            Dict[str, Any]: The best hyperparameters found.
         """
+
         def objective(trial):
             K.clear_session()
+            tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial
+            
             params = {
                 "nodes": trial.suggest_int("nodes", 4, 64, log=True),
                 "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
@@ -1623,61 +1653,32 @@ class Intermediate(INetwork):
                 "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
                 "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
             }
-            with tf.device(device):
 
-                loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+            with tf.device(device):
+                # loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+                loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
 
+        logging.getLogger('tensorflow').setLevel(logging.ERROR)
+        tf.get_logger().setLevel('ERROR')
+
         study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=5, n_jobs=-1)  # Parallelize trials
+        # Use n_jobs=2 since it is stable on your system
+        study.optimize(objective, n_trials=5, n_jobs=1)
+        
         best_params = study.best_params
-        return best_params
+        return best_params    
+    
 
-    def save(self, path: str, identifier: str = "_") -> None:
-        """
-        Save the NN model and the class instance.
+    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:    # check
+        x_final = super()._input_wrapper_prediction(x_test, multi_input)
 
-        Args:
-            path (str): Directory path to save the model and instance.
-            identifier (str): Identifier for the saved files.
-        """
-        os.makedirs(path, exist_ok=True)
+        if self.level >1 :
 
-        # Save the Keras model separately
-        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
-        self.model.save(model_path)
-
-        # Save the class instance excluding the Keras model
-        temp_model = self.model
-        self.model = None
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'wb') as f:
-            pickle.dump(self, f)
-
-        # Restore the model attribute
-        self.model = temp_model
-
-    @classmethod
-    def load(cls, path: str, identifier: str) -> 'Intermediate':
-        """
-        Load the NN model and the class instance.
-
-        Args:
-            path (str): Directory path from which to load the model and instance.
-            identifier (str): Identifier for the saved files.
-
-        Returns:
-            Intermediate: The loaded Intermediate instance.
-        """
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
-            instance = pickle.load(f)
-
-        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
-        custom_objects = {
-            'mse': MeanSquaredError()  # Add any custom objects required by the model
-        }
-        instance.model = load_model(model_path, custom_objects=custom_objects)
-
-        return instance
+            for l in range(0,self.level-1):
+                x_final = np.concatenate((x_final, self.prev_steps[l]._wrapper_prediction(x_final, multi_input)), axis=1)
+        
+        return x_final
 
 # class Intermediate(INetwork):
 #     def __init__(self, 

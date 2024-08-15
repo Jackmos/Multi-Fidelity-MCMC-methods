@@ -22,10 +22,21 @@ from scipy.stats import multivariate_normal,beta
 import arviz as az
 import time
 
-from abc import ABCMeta, abstractstaticmethod, abstractmethod
 
-def custom_activation(x):
+# Custom Activation Function
+def custom_activation(x: tf.Tensor) -> tf.Tensor:
+    """
+    Custom activation function combining linear and non-linear transformations.
+
+    Args:
+        x (tf.Tensor): Input tensor.
+
+    Returns:
+        tf.Tensor: Transformed tensor.
+    """
     return x + K.square(K.sin(x))
+
+
 
 def  normalization(x):
     return (x - np.min(x)) / (
@@ -49,24 +60,95 @@ def import_data(name):
 
     return (R, U,t)
 
-def custom_loss(y_pred,y_true):
-    goodind = K.not_equal(y_pred,-10)
-    #goodind = tf.math.logical_not(tf.math.is_nan(y_pred))
-    y_pred_loss = tf.boolean_mask(y_pred,goodind)
-    y_pred_true = tf.boolean_mask(y_true,goodind)
+# Custom Loss Function
+def custom_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+    """
+    Custom loss function that ignores certain values in y_pred.
+
+    Args:
+        y_true (tf.Tensor): True values.
+        y_pred (tf.Tensor): Predicted values.
+
+    Returns:
+        tf.Tensor: Computed loss.
+    """
+    # Identify indices where y_pred is not equal to -10
+    goodind = tf.not_equal(y_pred, -10.0)
+    
+    # Mask y_pred and y_true based on the identified indices
+    y_pred_loss = tf.boolean_mask(y_pred, goodind)
+    y_pred_true = tf.boolean_mask(y_true, goodind)
+    
+    # Compute mean squared error loss
     return K.mean(K.square(y_pred_loss - y_pred_true))
 
-def getOpti(name,lr):
-    if name == 'Adam':
-        return Adam(learning_rate=lr,amsgrad=True)
-    elif name == 'Nadam':
-        return Nadam(learning_rate=lr)
-    elif name == 'Adamax':
-        return Adamax(learning_rate=lr)
-    elif name == 'RMSprop':
-        return RMSprop(learning_rate=lr)
-    elif name == 'standardadam':
-        return 'adam'
+
+
+# Get Optimizer
+def getOpti(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
+    """
+    Returns the optimizer based on the given name.
+
+    Args:
+        name (str): Name of the optimizer.
+        lr (float): Learning rate for the optimizer.
+
+    Returns:
+        tf.keras.optimizers.Optimizer: The selected optimizer.
+
+    Raises:
+        ValueError: If the optimizer name is unknown.
+    """
+    optimizers = {
+        'Adam': Adam(learning_rate=lr, amsgrad=True),
+        'Nadam': Nadam(learning_rate=lr),
+        'Adamax': Adamax(learning_rate=lr),
+        'standardadam': 'adam'
+    }
+    
+    if name not in optimizers:
+        raise ValueError(f"Unknown optimizer name: {name}")
+    
+    return optimizers[name]
+
+
+
+def add_noise(noise_std_data: np.ndarray, 
+              noise_sta_output: np.ndarray, 
+              data: np.ndarray, 
+              output: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Adds Gaussian noise to the input data and output, concatenating the noisy versions 
+    to the original arrays.
+
+    Args:
+        noise_std_data (np.ndarray): Standard deviations for noise to be added to the data.
+        noise_sta_output (np.ndarray): Standard deviations for noise to be added to the output.
+        data (np.ndarray): The original data array.
+        output (np.ndarray): The original output array.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Tuple containing the noisy data and output arrays.
+    """
+    output_flag = output.copy()  # Initialize the output_flag with the original output
+    data_flag = data.copy()      # Initialize the data_flag with the original data
+
+    # Loop over each standard deviation pair and add noise to the data and output
+    for std1, std2 in zip(noise_std_data, noise_sta_output):
+        # Generate Gaussian noise with mean 0 and standard deviation std1 for the output
+        noise_1 = np.random.normal(0, std1, output.shape[0])
+        # Generate Gaussian noise with mean 0 and standard deviation std2 for the data
+        noise_2 = np.random.normal(0, std2, data.shape)
+        
+        # Add the noise to the original output and data
+        temp1 = output + noise_1[:, np.newaxis]
+        temp2 = data + noise_2
+        
+        # Concatenate the noisy data to the original arrays
+        output_flag = np.concatenate((output_flag, temp1), axis=0)
+        data_flag = np.concatenate((data_flag, temp2), axis=0)
+
+    return output_flag, data_flag
 
 def getModel(params,num_inputs,name):
     if(name == '2step'):

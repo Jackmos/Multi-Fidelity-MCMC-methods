@@ -252,3 +252,89 @@ class System2(SystemSolver):
         print("The system of differential equations is:")
         print("dy1/dt = a * y1 - b * y1 * y2")
         print("dy2/dt = c * y1 * y2 - d * y2")
+
+class System3(SystemSolver):
+    """
+    Solver for a modified FitzHugh-Nagumo-like system of differential equations.
+    """
+    def __init__(self):
+        """
+        Initialize the solver for SystemModifiedFitzHughNagumo with default values.
+        """
+        super().__init__()
+        self.dim_sys = 2  # Dimension of the system (number of equations)
+
+    def equations(self, t: float, y: np.ndarray, alpha: float, beta: float, gamma: float) -> np.ndarray:
+        """
+        Define the system of differential equations for the modified FitzHugh-Nagumo system.
+
+        Args:
+        - t: Current time point
+        - y: Current state of the system (array of values)
+        - alpha, beta, gamma: Parameters for the differential equations
+
+        Returns:
+        - Array of derivatives (dy/dt)
+        """
+        # y[0] represents the activator variable (v)
+        # y[1] represents the inhibitor variable (w)
+
+        # Equation for the activator (v)
+        dvdt = y[0] - (y[0]**3) / 3 - y[1] + alpha
+        
+        # Equation for the inhibitor (w)
+        dwdt = beta * (y[0] + gamma - y[1])
+        
+        return np.array([dvdt, dwdt])
+
+    def print_system(self):
+        """
+        Print the system of differential equations for SystemModifiedFitzHughNagumo.
+        """
+        print("The modified FitzHugh-Nagumo system of differential equations is:")
+        print("dv/dt = v - v^3 / 3 - w + alpha")
+        print("dw/dt = beta * (v + gamma - w)")
+
+
+class System4(SystemSolver):
+    """
+    Solver for the forced Van der Pol oscillator system of differential equations.
+    """
+    def __init__(self):
+        """
+        Initialize the solver for the forced Van der Pol system with default values.
+        """
+        super().__init__()
+        self.dim_sys = 2  # Dimension of the system (number of equations)
+
+    def equations(self, t: float, y: np.ndarray, mu: float, omega: float) -> np.ndarray:
+        """
+        Define the system of differential equations for the forced Van der Pol oscillator.
+
+        Args:
+        - t: Current time point
+        - y: Current state of the system (array of values)
+        - mu: Parameter for the nonlinearity and damping
+        - omega: Parameter for the external forcing frequency
+
+        Returns:
+        - Array of derivatives (dy/dt)
+        """
+        # y[0] is x (the primary variable)
+        # y[1] is dx/dt (the derivative of x)
+        
+        # Equation for dx/dt
+        dxdt = y[1]
+        
+        # Equation for d²x/dt², expressed as dy1dt (acceleration)
+        dy1dt = mu * (1 - y[0]**2) * y[1] - y[0] + np.sin(omega * t)
+        
+        return np.array([dxdt, dy1dt])
+
+    def print_system(self):
+        """
+        Print the system of differential equations for the forced Van der Pol oscillator.
+        """
+        print("The forced Van der Pol oscillator system of differential equations is:")
+        print("dx/dt = y1")
+        print("dy1/dt = mu * (1 - x^2) * y1 - x + sin(omega * t)")

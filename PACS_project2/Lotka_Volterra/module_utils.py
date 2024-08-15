@@ -325,6 +325,7 @@ def getOpti(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
         raise ValueError(f"Unknown optimizer name: {name}")
     
     return optimizers[name]
+
 def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Model:
     """
     Returns a compiled Keras model based on the specified architecture.
@@ -424,7 +425,6 @@ def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Mode
         return model
 
     # For other models without multiple outputs
-    output = Dense(num_outputs, activation='linear', name=name)(hidden1)
     model = Model(inputs=inputs, outputs=output)
     opti = getOpti(params['opt'], params['lr'])
     model.compile(loss='mse', optimizer=opti, metrics=['mse'])

@@ -289,6 +289,8 @@ def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray,
     return np.mean(scores)
 
 
+
+
 def kCrossVal_parallel(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
                        name: str, input_shape: int, output_shape: int, p: int = 2, n_jobs: int = -1) -> float:
     """
@@ -298,7 +300,7 @@ def kCrossVal_parallel(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: 
         N (int): Total number of samples.
         Nepo (int): Number of epochs for training.
         x (np.ndarray): Training data.
-        y (np.ndarray): Training outputs.
+        y (np.ndarray): Training outputs (expected to have 2 columns).
         params (Dict[str, Any]): Hyperparameters for the model.
         name (str): Name of the model.
         input_shape (int): Shape of the input data.
@@ -315,12 +317,23 @@ def kCrossVal_parallel(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: 
         model = getModel(params, input_shape, name, output_shape)
         x_train, x_val = x[train_index], x[test_index]
         y_train, y_val = y[train_index], y[test_index]
-        model.fit(x_train, y_train, epochs=Nepo, batch_size=len(train_index), verbose=0)  # Optimization: Efficient model training
+        
+        # Train the model
+        model.fit(x_train, y_train, epochs=Nepo, batch_size=len(train_index), verbose=0)
+        
+        # Get predictions
         predictions = model.predict(x_val)
-        return np.mean(np.square(y_val - predictions[:, 0]))  # Optimization: Efficient calculation of the score
+        
+        # Reshape y_val if necessary and calculate mean squared error
+        y_val = y_val.reshape(-1, 1) if len(y_val.shape) == 1 else y_val
+        
+        # Ensure that predictions and y_val have the same shape
+        assert predictions.shape == y_val.shape, f"Mismatch in shapes: predictions {predictions.shape}, y_val {y_val.shape}"
+        
+        # Calculate mean squared error over all output columns
+        return np.mean(np.square(y_val - predictions))
 
-    scores = Parallel(n_jobs=n_jobs)(delayed(fit_and_score)(train_index, test_index) for train_index, test_index in kf.split(x))  # Optimization: Parallel processing
+    # Perform k-fold cross-validation in parallel
+    scores = Parallel(n_jobs=n_jobs)(delayed(fit_and_score)(train_index, test_index) for train_index, test_index in kf.split(x))
+    
     return np.mean(scores)
-
-
-
