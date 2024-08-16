@@ -463,7 +463,6 @@ class INetwork(ABC):
         self.model.save(file_path) 
         print(f"Model saved to {file_path}") 
 
-    @staticmethod
     def load(self, file_path: str) -> None: 
         """ 
         Load a trained LSTM model from a file. 
@@ -678,7 +677,7 @@ class Neural_Network(INetwork):
         storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study.db'
         study = optuna.create_study(direction="minimize",storage=storage)
         # Use n_jobs=2 since it is stable on your system
-        study.optimize(objective, n_trials=4, n_jobs=-1)
+        study.optimize(objective, n_trials=10, n_jobs=-1)
         
         best_params = study.best_params
         return best_params
@@ -1435,18 +1434,19 @@ class LSTM_network(INetwork):
             K.clear_session()
             params = {
                 "nodes": trial.suggest_int("nodes", 4, 64, log=True),
-                "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
                 "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
-                "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
                 "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
                 "sequence_length": trial.suggest_int("sequence_length", 10, 100),
-                "sequence_freq": trial.suggest_int("sequence_freq", 1, 10),
-                "patience": trial.suggest_int("patience", 3, 10),
+                "sequence_freq": trial.suggest_int("sequence_freq", 2, 10),
+                "patience": trial.suggest_int("patience", 50, 100),
+                "lay": trial.suggest_int("lay", 1, 3),
+                "dropout": trial.suggest_float("dropout", 0.05, 0.5, log=True)
+
             }
             
             with tf.device(device):
 
-                loss = kCrossVal_parallel(N=self.n, Nepo=self.N, x=data_train, y=output_train, 
+                loss = kCrossVal_parallel(N=self.data_train.shape[0], Nepo=self.N, x=data_train, y=output_train, 
                                         params=params, name=self.name, input_shape=self.input_shape, 
                                         output_shape=self.output_shape, p=5, n_jobs=-1)
             return loss
@@ -1641,7 +1641,7 @@ class Intermediate(INetwork):
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
-
+        print("HPO name ", self.name )
         def objective(trial):
             K.clear_session()
             tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial
@@ -1655,19 +1655,19 @@ class Intermediate(INetwork):
             }
 
             with tf.device(device):
-                # loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
+                #loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
                 loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
 
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
-
-        study = optuna.create_study(direction="minimize")
+        storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study_LSTM.db'
+        study = optuna.create_study(direction="minimize",storage=storage)
         # Use n_jobs=2 since it is stable on your system
-        study.optimize(objective, n_trials=5, n_jobs=1)
+        study.optimize(objective, n_trials=4, n_jobs=-1)
         
         best_params = study.best_params
-        return best_params    
+        return best_params
     
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:    # check

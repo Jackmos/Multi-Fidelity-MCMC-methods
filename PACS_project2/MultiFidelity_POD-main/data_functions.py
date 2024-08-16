@@ -295,7 +295,7 @@ class ReactionDiffusionData:
         # x_final[:,:,1]=denormalization(x_final[:,:,1], self.mu_1, self.mu_0)
 
         x_final=domain[:, :, [1]]
-        x_final[:,:,0]=denormalization(x_final[:,:,1], self.mu_1, self.mu_0)
+        x_final[:,:,0]=denormalization(x_final[:,:,0], self.mu_1, self.mu_0)
 
         for l in range(self.n_POD):
             x_final=np.concatenate((x_final, denormalization(self.fwd_uLF[l].prediction(domain),np.max(self.u_train_POD[l]),np.min(self.u_train_POD[l]))),axis=2)    # denormalized with u_LF because bigger set 

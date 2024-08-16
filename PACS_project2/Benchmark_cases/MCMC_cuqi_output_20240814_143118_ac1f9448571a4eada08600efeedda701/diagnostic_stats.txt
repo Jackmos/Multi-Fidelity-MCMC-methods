@@ -1,0 +1,6 @@
+MCMC Diagnostics:
+Estimated Parameters (mean): [8.19389696]
+Standard Deviation: [0.02088785]
+Effective Sample Size (ESS): 283.5323897525675
+R-hat: 1.0103036933715732
+
