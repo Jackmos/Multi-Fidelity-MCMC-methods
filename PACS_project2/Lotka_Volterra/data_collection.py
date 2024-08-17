@@ -156,23 +156,52 @@ class SystemSolver(ABC):
 
         return self.time_points, self.y_values_list, self.params
 
+
     def plot_results(self):
         """
         Plot the results of the system's evolution for different parameter sets.
+        Group the plots into separate figures, each containing at most 3 subplots.
         """
-        plt.figure(figsize=(12, 8))
+        
+        # Sort by the first parameter (or another criterion)
+        sorted_indices = np.argsort([params[0] for params in self.params])
+        self.y_values_list = [self.y_values_list[i] for i in sorted_indices]
+        self.params = [self.params[i] for i in sorted_indices]
 
-        for i, y_values in enumerate(self.y_values_list):
-            plt.plot(self.time_points, y_values[:, 0], label=f'y1(t) for params={self.params[i]}', marker='o')
-            if y_values.shape[1] > 1:
-                plt.plot(self.time_points, y_values[:, 1], label=f'y2(t) for params={self.params[i]}', marker='x')
-            if y_values.shape[1] > 2:
-                plt.plot(self.time_points, y_values[:, 2], label=f'y3(t) for params={self.params[i]}', marker='s')
+        num_plots = len(self.y_values_list)
+        
+        # Iterate over the plots in chunks of 3
+        for plot_group_start in range(0, num_plots, 3):
+            # Create a new figure for each group of 3
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            
+            # Ensure axes is always a list, even if there's only one subplot
+            axes = np.ravel(axes)
+            
+            # Select the current group of plots (up to 3)
+            current_group = self.y_values_list[plot_group_start:plot_group_start + 3]
+            current_params = self.params[plot_group_start:plot_group_start + 3]
+            
+            for i, (y_values, params) in enumerate(zip(current_group, current_params)):
+                ax = axes[i]
+                ax.plot(self.time_points, y_values[:, 0], label=f'y1(t)', marker='o')
+                if y_values.shape[1] > 1:
+                    ax.plot(self.time_points, y_values[:, 1], label=f'y2(t)', marker='x')
+                if y_values.shape[1] > 2:
+                    ax.plot(self.time_points, y_values[:, 2], label=f'y3(t)', marker='s')
 
-            plt.xlabel('Time')
-            plt.ylabel('Values')
-            plt.legend()
-            plt.title('System of Differential Equations for Different Sets of Parameters')
+                ax.set_xlabel('Time')
+                ax.set_ylabel('Values')
+                ax.legend()
+                ax.set_title(f'System for params={params}')
+            
+            # Hide any unused subplots (if the total number isn't a multiple of 3)
+            for j in range(len(current_group), 3):
+                fig.delaxes(axes[j])
+            
+            # Set layout and display the figure
+            fig.suptitle(f'System of Differential Equations for Parameters {plot_group_start + 1} to {plot_group_start + len(current_group)}', fontsize=16)
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust to fit the title
             plt.show()
 
     def get_dim(self):

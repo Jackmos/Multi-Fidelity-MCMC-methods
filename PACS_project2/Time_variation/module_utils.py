@@ -1,10 +1,6 @@
-# The following NN architectures are the ones introduced by Maurice Amendt.
 from keras.models import Model
-from keras.layers import Dense, Input, Dropout
-from keras.layers import Layer
-from tensorflow.keras.layers import (
-    concatenate,
-)  
+from keras.layers import Dense, Input, Dropout, Layer
+from tensorflow.keras.layers import concatenate
 from keras.regularizers import l2, l1
 from sklearn.model_selection import KFold
 import numpy as np
@@ -13,13 +9,18 @@ import keras.backend as K
 import tensorflow as tf
 import keras as kr
 import h5py
+from typing import Tuple
 
 class FourierLayer(Layer):
-    def __init__(self, output_dim, **kwargs):
+    """Custom Keras layer for Fourier Transform-based activations."""
+    
+    def __init__(self, output_dim: int, **kwargs):
+        """Initialize FourierLayer with the dimension of the output."""
         self.output_dim = output_dim
         super(FourierLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
+        """Create trainable weights for the sine and cosine functions."""
         self.kernel_sin = self.add_weight(name='kernel_sin',
                                           shape=(self.output_dim,),  
                                           initializer='glorot_uniform',
@@ -30,55 +31,65 @@ class FourierLayer(Layer):
                                           trainable=True)
         super(FourierLayer, self).build(input_shape)
 
-    def call(self, x):
+    def call(self, x: tf.Tensor) -> tf.Tensor:
+        """Apply the sine and cosine transformations to the input tensor."""
         result = tf.sin(tf.multiply(x, self.kernel_sin)) + tf.cos(tf.multiply(x, self.kernel_cos))
         return result
 
-    def compute_output_shape(self, input_shape):
+    def compute_output_shape(self, input_shape) -> Tuple[int, ...]:
+        """Compute output shape to be same as input shape."""
         return input_shape
 
-
-
-def custom_activation(x):
+def custom_activation(x: tf.Tensor) -> tf.Tensor:
+    """Custom activation function: adds square of sine to input tensor."""
     return x + K.square(K.sin(x))
 
-def  normalization(x):
-    return (x - np.min(x)) / (
-    np.max(x) - np.min(x)
-)
+def normalization(x: np.array) -> np.array:
+    """Normalize a NumPy array to range [0, 1]."""
+    return (x - np.min(x)) / (np.max(x) - np.min(x))
 
-def import_data(name):#-> Tuple[np.array, np.array]:
-    """imports data defined in a .mat file
+def import_data(name: str) -> Tuple[np.array, np.array]:
+    """
+    Imports data from a .mat file.
 
     Args:
-        name : name of the file
+        name (str): Name of the .mat file.
 
     Returns:
-        Tuple[np.array, np.array]: input and output of the NN
+        Tuple[np.array, np.array]: Input and output data from the file.
     """
     with h5py.File(name, "r") as file:
-        
-        t = file["t"][()]
+        t = file["t"][()]  # Extract 't' dataset and transpose
+        U = file["U"][()]  # Extract 'U' dataset
+    return t.T, U
 
-        U = file["U"][()]
+def custom_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+    """
+    Custom loss function ignoring specific invalid values.
 
-        # V=file['V']
-        # V=V[()]
+    Args:
+        y_true (tf.Tensor): True values tensor.
+        y_pred (tf.Tensor): Predicted values tensor.
 
-    return (t.T, U)
+    Returns:
+        tf.Tensor: Mean squared error considering only valid values.
+    """
+    goodind = K.not_equal(y_pred, -10)  # Consider only values not equal to -10
+    y_pred_valid = tf.boolean_mask(y_pred, goodind)
+    y_true_valid = tf.boolean_mask(y_true, goodind)
+    return K.mean(K.square(y_pred_valid - y_true_valid))  # MSE of valid values
 
+def get_optimizer(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
+    """
+    Select and return an optimizer based on name and learning rate.
 
-def custom_loss(y_pred, y_true):
-    goodind = K.not_equal(y_pred, -10)
-    # -10 is used as special value to indicate NaN
+    Args:
+        name (str): Name of the optimizer ('Adam', 'Nadam', 'Adamax', 'RMSprop', etc.)
+        lr (float): Learning rate for the optimizer.
 
-    # goodind = tf.math.logical_not(tf.math.is_nan(y_pred))
-    y_pred_loss = tf.boolean_mask(y_pred, goodind)
-    y_pred_true = tf.boolean_mask(y_true, goodind)
-    return K.mean(K.square(y_pred_loss - y_pred_true))  # MSE
-
-
-def getOpti(name, lr):
+    Returns:
+        tf.keras.optimizers.Optimizer: The selected optimizer.
+    """
     if name == "Adam":
         return Adam(learning_rate=lr, amsgrad=True)
     elif name == "Nadam":
@@ -87,9 +98,8 @@ def getOpti(name, lr):
         return Adamax(learning_rate=lr)
     elif name == "RMSprop":
         return RMSprop(learning_rate=lr)
-    elif name == "standardadam":
-        return "adam"
-
+    else:
+        raise ValueError(f"Unsupported optimizer: {name}")
 
 def getModel(params, name):
     if name == "2step":

@@ -34,7 +34,18 @@ def MCMC(
     Perform MCMC sampling and save diagnostics and results.
     """
     # Create a unique folder name for saving outputs
-    folder_name = f"MCMC_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
+    # Convert key parameters to strings that are safe to use in a file path
+    rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov, precision=2).replace("\n", "")
+    rwmh_adaptive_str = "adaptive" if rwmh_adaptive else "non_adaptive"
+
+    # Create a folder name based on key parameters
+    folder_name = f"MCMC_output_n{n}_cov{rwmh_cov_str}_scaling{rmwh_scaling}_algo{algo}_{rwmh_adaptive_str}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Replace any potential forbidden characters (like slashes) in folder names
+    folder_name = folder_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
+
+    # Ensure the folder name is not too long (max 255 characters for most file systems)
+    folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
     os.makedirs(folder_name, exist_ok=True)
 
     MAP = get_MAP(my_posterior[-1]) if dim != 1 else None
@@ -52,7 +63,7 @@ def MCMC(
         if len(my_posterior) <= 2:
             raise ValueError("MLDA function requires at least 3 posteriors")
         my_proposal = MLDA(
-            posteriors=my_posterior, subsampling_rates=[5, 5],
+            posteriors=my_posterior, subsampling_rates=[5]*len(my_posterior-1),
             adaptive_error_model='state-independent', initial_parameters=MAP,
             store_coarse_chain=True, proposal=AdaptiveMetropolis(C0=rwmh_cov)
         )
@@ -138,8 +149,17 @@ def MCMC_cuqi(
     """
     Perform MCMC sampling using CUQI library.
     """
-    # Create a unique folder name for saving outputs
-    folder_name = f"MCMC_cuqi_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
+
+    # Create a folder name based on key parameters
+    adapt_str = "adaptive" if adapt else "non_adaptive"
+    folder_name = f"MCMC_cuqi_n{n}_algo{algo}_{adapt_str}_scale{scale}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Replace any potential forbidden characters in folder names
+    folder_name = folder_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
+
+    # Ensure the folder name is not too long
+    folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
+
     os.makedirs(folder_name, exist_ok=True)
 
     estimates = np.empty((1, 0))
@@ -213,7 +233,6 @@ def MCMC_cuqi(
             f.write("\n")
     
     return estimates, {'expected_param': np.mean(estimates, axis=1), 'std_dev': np.std(estimates, axis=1), 'ess': ess, 'r_hat': r_hat}
-
 # def MCMC_cuqi(
 #     y: Any, 
 #     x: Any, 

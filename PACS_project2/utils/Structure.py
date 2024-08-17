@@ -5,6 +5,9 @@ from numpy import newaxis as _
 import copy
 import pickle
 import time
+from pprint import pprint
+from numba import njit
+
 from keras.models import load_model
 from typing import Callable, Tuple, Any, List, Optional, Union, Dict
 from contextlib import contextmanager
@@ -46,6 +49,37 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 ########################################
 
+# GPU Optimization: Enable memory growth if using TensorFlow with GPUs.
+physical_devices = tf.config.list_physical_devices('GPU')
+if physical_devices:
+    for gpu in physical_devices:
+        tf.config.experimental.set_memory_growth(gpu, True)
+
+
+
+@njit
+def concatenate_inputs(inputs, x_final):
+    # Handle different dimensionalities of the processed `x_final` data.
+    if x_final.ndim == 2:
+        # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
+        concatenated_input = np.concatenate((inputs, x_final), axis=1)
+
+    elif x_final.ndim == 3:
+        # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
+        inputs_expanded = np.expand_dims(inputs, axis=0)  
+        concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
+
+    else:
+        # Raise an error if `x_final` has an unsupported number of dimensions.
+        raise ValueError("Unsupported number of dimensions for x_final")
+    
+    return concatenated_input
+
+@njit
+def calculate_metrics(output_test: np.ndarray, pred: np.ndarray) -> Tuple[float, float]:
+    test_mse = np.mean(np.square(output_test - pred))
+    r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
+    return test_mse, r2
 
 # Define the types of networks as an enumeration for type safety and clarity.
 class NetworkType(Enum):
@@ -54,6 +88,7 @@ class NetworkType(Enum):
     HF = "HF"
     HFLIN = "Hflin"
     HFPER = "Hfper"
+    SINGLE="Single"
     INTER = "Inter"
     LSTM = "LSTM"
     LSTM_SUPPORT="LSTM_support"
@@ -75,7 +110,7 @@ class NetworkFactory:
                       do_HPO: bool = False,
                       verbose: bool = False,
                       device: str = '/CPU:0',
-                      profiler:TensorBoard=None) -> 'INetwork':
+                      profiler: TensorBoard = None) -> 'INetwork':
         """
         Build and return a network of the specified type.
 
@@ -101,34 +136,45 @@ class NetworkFactory:
         """
 
         try:
-            # Use Enum for safer and clearer type checking.
+            # Convert the network_type string to an enum for safer comparison and handling.
+            # NetworkType is expected to be an Enum class that holds various types of networks.
             network_type_enum = NetworkType[network_type.upper()]
         except KeyError:
-            # Check if it's an n-step network type using regex
+            # If the network type is not a recognized enum value, check if it matches an n-step pattern (e.g., "5STEP").
             match = re.match(r'(\d+)STEP', network_type, re.IGNORECASE)
             if match:
+                # Extract the number from the pattern (e.g., 5 in "5STEP") and build a MultiFidelity network.
                 n_step = int(match.group(1))
-                return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device, profiler=profiler)
+                return MultiFidelity(names, params, data_train, output_train, N, n, train,do_HPO, verbose, device=device, profiler=profiler)
             else:
+                # If network type is neither a valid enum nor a recognizable pattern, raise an error.
                 raise ValueError(f"Invalid network type: {network_type}")
-            
-        # Map the enum to the respective network class constructors.
-        if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN, NetworkType.HFPER}:
-            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose,device=device, profiler=profiler)
         
-        elif  network_type_enum ==  NetworkType["STEP"]: #network_type_enum == NetworkType.step:
-            # Ensure data_train and output_train are lists for MultiFidelity networks.
+        # Check if the network type is a low-fidelity, mid-fidelity, high-fidelity, or other similar neural network.
+        if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN,NetworkType.SINGLE, NetworkType.HFPER}:
+            # Build a neural network with the provided parameters and configurations.
+            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose, device=device, profiler=profiler)
+        
+        # Special case for step-based networks (could be related to MultiFidelity).
+        elif network_type_enum == NetworkType["STEP"]:
+            # Ensure data_train and output_train are both lists of numpy arrays for MultiFidelity networks.
             if not (isinstance(data_train, list) and isinstance(output_train, list)):
                 raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
             
-            return MultiFidelity(names, params, data_train, output_train, N, n, do_HPO, verbose, device=device, profiler=profiler)
+            # Create a MultiFidelity network.
+            return MultiFidelity(names, params, data_train, output_train, N, n,train, do_HPO, verbose, device=device, profiler=profiler)
         
+        # Case for intermediate networks, such as transition networks between fidelity levels.
         elif network_type_enum == NetworkType.INTER:
+            # Build and return an Intermediate network.
             return Intermediate(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, n=n, train=train, do_HPO=do_HPO, device=device)
         
-        elif network_type_enum == NetworkType.LSTM or network_type_enum==NetworkType.LSTM_SUPPORT:
-            return LSTM_network(name=network_type,params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
+        # Cases for LSTM-based networks, including regular LSTM and support LSTM types.
+        elif network_type_enum == NetworkType.LSTM or network_type_enum == NetworkType.LSTM_SUPPORT:
+            # Build and return an LSTM network.
+            return LSTM_network(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
 
+        # Raise an error if none of the valid cases match.
         raise ValueError(f"Invalid network type: {network_type}")
 
 
@@ -144,7 +190,13 @@ class INetwork(ABC):
 
     def __init__(self):
         self.inputs = None
+        # `transformations` is a list of transformations to be applied to the input data.
         self.transformations = []
+        self._data_train = None
+        self._output_train = None
+        self._n=None
+        self._N=None
+        self._params=None
 
     def variable_input(self, input_discr: Any) -> None:
         """
@@ -155,9 +207,91 @@ class INetwork(ABC):
         """
         self.inputs = input_discr
 
-    def set_train_sets(self, data_train,  output_train )->None:
-        self.data_train = data_train
-        self.output_train = output_train
+
+    @property
+    def data_train(self) -> np.ndarray:
+        """
+        Get the input training data.
+
+        Returns:
+        - np.ndarray: The current input training data.
+        """
+        return self._data_train
+
+    @data_train.setter
+    def data_train(self, data_train: np.ndarray) -> None:
+        """
+        Set the input training data for the network.
+
+        Parameters:
+        - data_train (np.ndarray): Input training data.
+        """
+        self._data_train = data_train
+
+    @property
+    def output_train(self) -> np.ndarray:
+        """
+        Get the expected output corresponding to the training data.
+
+        Returns:
+        - np.ndarray: The current output training data.
+        """
+        return self._output_train
+
+    @output_train.setter
+    def output_train(self, output_train: np.ndarray) -> None:
+        """
+        Set the expected output corresponding to the training data.
+
+        Parameters:
+        - output_train (np.ndarray): Expected output for training data.
+        """
+        self._output_train = output_train
+
+    @property
+    def params(self):
+        """Returns the hyperparameters of the model."""
+        return self._params
+
+    @params.setter
+    def params(self, value):
+        """Sets the hyperparameters and prints them."""
+        self._params = value
+        self.print_params()
+
+    def print_params(self):
+        """Prints the model's hyperparameters in a readable format."""
+        print("Model Hyperparameters:")
+        for key, val in self._params.items():
+            print(f"{key}: {val}")
+
+    @property
+    def N(self):
+        """Returns the number of data points."""
+        return self._N
+
+    @N.setter
+    def N(self, value):
+        """Sets the number of data points."""
+        if not isinstance(value,int) or value<0:
+            raise ValueError('Number of epochs must be a positive integer!')
+        self._N = value
+
+    @property
+    def n(self):
+        """Returns the dimensionality of the inputs."""
+        return self._n
+
+    @n.setter
+    def n(self, value):
+        """Sets the dimensionality of the inputs."""
+        if not isinstance(value,int) or value<0:
+            raise ValueError('Batch size must be a positive integer!')
+
+        self._n = value
+    # def set_train_sets(self, data_train,  output_train )->None:    #  -------------------------------
+    #     self.data_train = data_train
+    #     self.output_train = output_train
 
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
@@ -171,32 +305,32 @@ class INetwork(ABC):
         Returns:
         - np.ndarray: Prepared data for prediction or an empty array if inputs are not set.
         """
-        # Ensure x_test is 2D.
+
+        # Ensure that the input `x_test` is a 2D array.
         if x_test.ndim == 1:
             x_test = x_test.reshape(-1, 1)
 
-        # Transpose x_test for consistent shape.
+        # Transpose `x_test` to match the expected shape for further operations.
         x_test = x_test.T
 
-        # Apply transformations if any.
+        # Apply any transformations stored in `self.transformations`.
         if self.transformations:
             x_final = reduce(lambda acc, transf: np.hstack([acc, transf(acc)]), self.transformations, x_test)
         else:
             x_final = x_test
 
-        # Handle inputs and prepare final data for prediction.
+        # If the `inputs` attribute has been set tile the `x_final` array to match the number of samples in `self.inputs`.
         if self.inputs is not None:
             x_final = np.tile(x_final, (self.inputs.shape[0], 1))          
         else:
+            # If `self.inputs` is not set, issue a warning and return an empty array.
             warning_message = "Inputs are not set."
             warnings.warn(warning_message, UserWarning)
             return np.array([])
 
         return x_final
-
-     
-
-    def wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
+    
+    def _wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
         """
         Wrapper for making predictions with processed test inputs.
         
@@ -207,145 +341,168 @@ class INetwork(ABC):
         Returns:
             np.ndarray: Predicted output data.
         """
-        # Process the test inputs using the internal wrapper
-        x_final = self._input_wrapper_prediction(x_test, multi_input)
-        
-        # Determine the number of dimensions
-        if x_final.ndim == 2:
-            # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
-            concatenated_input = np.concatenate((self.inputs, x_final), axis=1)
-        elif x_final.ndim == 3:                                                               # commente 13-8-24, for reactionPOD
-            # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
-            inputs_expanded = np.expand_dims(self.inputs, axis=0)  # Shape (1, n, 1)
-            concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
-        else:
-            raise ValueError("Unsupported number of dimensions for x_final")
-        # elif x_final.ndim==3:
-        #     concatenated_input=x_final
-        # else:
-        #      raise ValueError("Unsupported number of dimensions for x_final")
 
-        # Perform the prediction and flatten the result
+        # Process the `x_test` input data using `_input_wrapper_prediction`.
+        x_final = self._input_wrapper_prediction(x_test, multi_input)
+
+        concatenated_input = concatenate_inputs(self.inputs, x_final)
+
+        # Use the subclass's `prediction` method to predict
+ 
         return self.prediction(concatenated_input).flatten()
 
 
 
     @compute_time
     def param_inverse(self, mean_prior: np.ndarray, 
-                      x_data: np.ndarray, 
-                      max_par:float, 
-                      cov_prior: Optional[np.ndarray] = None, 
-                      cov_noise: float = 0.1, 
-                      cov_likelihood: Optional[np.ndarray] = None,
-                      y_obs: Optional[np.ndarray] = None, 
-                      x_real: Optional[np.ndarray] = None, 
-                      number_chains: int = 1, 
-                      N: int = 1000, 
-                      burn_in: int = 500, 
-                      levels: int = 1, 
-                      diagnostic: bool = True, 
-                      rwmh_cov: Optional[np.ndarray] = None, 
-                      rmwh_scaling: float = 0.1, 
-                      rwmh_adaptive: bool = True, 
-                      algo: str = "MH",
-                      force_sequential: bool = False,
-                      transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
-
+                    x_data: np.ndarray, 
+                    max_par: float, 
+                    cov_prior: Optional[np.ndarray] = None, 
+                    cov_noise: float = 0.1, 
+                    cov_likelihood: Optional[np.ndarray] = None,
+                    y_obs: Optional[np.ndarray] = None, 
+                    x_real: Optional[np.ndarray] = None, 
+                    number_chains: int = 1, 
+                    N: int = 1000, 
+                    burn_in: int = 500, 
+                    levels: int = 1, 
+                    diagnostic: bool = True, 
+                    rwmh_cov: Optional[np.ndarray] = None, 
+                    rmwh_scaling: float = 0.1, 
+                    rwmh_adaptive: bool = True, 
+                    algo: str = "MH",
+                    force_sequential: bool = False,
+                    transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
         """
         Perform parameter inversion using MCMC sampling.
 
         Parameters:
-        - mean_prior: Mean of the prior distribution.
-        - x_data: Input data.
-        - max_par: maximal value of the parameter to be estimated. Used only for graphical purposes
-        - cov_prior: Covariance of the prior distribution (optional).
-        - cov_noise: Noise covariance.
-        - cov_likelihood: Covariance of the likelihood (optional).
-        - y_obs: Observed data (optional).
-        - x_real: Real parameters (optional).
-        - number_chains: Number of MCMC chains.
-        - N: Number of MCMC iterations.
-        - burn_in: Number of burn-in iterations.
-        - levels: Number of model levels.
-        - diagnostic: Flag to enable diagnostic plots.
-        - rwmh_cov: Covariance matrix for RWMH proposal (optional).
-        - rmwh_scaling: Scaling factor for RWMH.
-        - rwmh_adaptive: Flag for adaptive RWMH.
-        - algo: MCMC algorithm to use ("MH", "AM", "CN", "DREAMZ").
-        - transformation: List of transformations to apply.
-        - force_sequential: if True impose a sequential approach to the MCMC algorithm
+        - mean_prior (np.ndarray): Mean of the prior distribution.
+        - x_data (np.ndarray): Input data for the model.
+        - max_par (float): Maximum parameter value for estimation, used for plotting.
+        - cov_prior (Optional[np.ndarray]): Covariance of the prior distribution.
+        - cov_noise (float): Covariance of the noise in the observations.
+        - cov_likelihood (Optional[np.ndarray]): Covariance matrix for the likelihood function.
+        - y_obs (Optional[np.ndarray]): Observed data to match against the model.
+        - x_real (Optional[np.ndarray]): True parameter values for error computation.
+        - number_chains (int): Number of MCMC chains to run.
+        - N (int): Total number of MCMC iterations.
+        - burn_in (int): Number of burn-in iterations.
+        - levels (int): Number of model levels (for multi-level modeling).
+        - diagnostic (bool): Flag indicating whether to generate diagnostic plots.
+        - rwmh_cov (Optional[np.ndarray]): Covariance matrix for the RWMH proposal distribution.
+        - rmwh_scaling (float): Scaling factor for the RWMH proposal.
+        - rwmh_adaptive (bool): Flag for enabling adaptive RWMH proposals.
+        - algo (str): Algorithm to use for MCMC sampling ('MH', 'AM', 'CN', 'DREAMZ').
+        - force_sequential (bool): Flag to enforce sequential processing of the MCMC algorithm.
+        - transformation (List[Any]): List of transformations to apply to the input data.
 
         Returns:
-        - estimates: MCMC estimates of the parameters.
-        - error: Relative error of the estimates.
+        - Tuple[np.ndarray, np.ndarray, List[dict]]:
+            - estimates (np.ndarray): Estimated parameters after MCMC sampling.
+            - error (np.ndarray): Relative error of the estimates compared to `x_real`.
+            - param_results (List[dict]): List of dictionaries containing details of the MCMC sampling results.
         """
+
         self.transformations = transformation
         self.inputs = x_data
 
+        # Determine the dimensionality of the data (based on either `x_real` or `y_obs`).                                   # <-------------------- CONTROLLA QUESTO CHECK
         if x_real is not None:
-            dim = x_real.shape[0]
+            dim = x_real.shape[0]  # Number of dimensions of the true parameter values.
         elif y_obs is not None:
-            dim = y_obs.shape[0]
+            dim = y_obs.shape[0]  # Number of dimensions based on observations.
         else:
             warnings.warn("No observation nor data given", UserWarning)
             return np.array([]), np.array([])
 
+        # Check if the number of iterations is sufficient (i.e., greater than the burn-in period).
         if N <= burn_in:
             warnings.warn("Number of steps insufficient, smaller or equal to burn-in", UserWarning)
 
         if cov_prior is None:
-            cov_prior = mean_prior * 0.2
+            cov_prior = mean_prior * 0.2  #  scale the prior covariance.
 
         if cov_likelihood is None:
             cov_likelihood = cov_noise**2 * np.eye(x_real.shape[0])
 
+        # Define the prior distribution using a multivariate normal distribution.
         my_prior = multivariate_normal(mean_prior, cov_prior)
 
+        # If `y_obs` is not provided, simulate it using predictions with added Gaussian noise.
         if y_obs is None:
-            y_obs = self.wrapper_prediction(x_real) + np.random.normal(loc=0., scale=cov_noise, size=x_real.shape)
+            y_obs = self._wrapper_prediction(x_real) + np.random.normal(loc=0., scale=cov_noise, size=x_real.shape)
         else:
+            # Add Gaussian noise to the provided observations.
             y_obs += np.random.normal(loc=0., scale=cov_noise, size=y_obs.shape)
-            y_obs = y_obs.flatten()
+            y_obs = y_obs.flatten()  # Ensure observations are flattened.
 
+        # Multi-level modeling handling, checking for number of levels and consistency.
         if levels > 1:
+            # Check if the multi-level model list exists.
             if not hasattr(self, 'model_list'):
                 warnings.warn("1 level case considered", UserWarning)
+            # Ensure the number of levels does not exceed available models.
             elif levels > len(self.model_list):
                 warnings.warn("Number of levels is exceeding the number of models", UserWarning)
-            elif levels==2:
-                self.model_list[0].inputs=x_data
-                self.model_list[1].inputs=x_data
+            elif levels == 2:
+                # For 2 levels, handle inputs and set up likelihood and posterior for each level.
+                self.model_list[0].inputs = x_data
+                self.model_list[1].inputs = x_data
                 my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood), tda.GaussianLogLike(y_obs, cov_likelihood)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[0], self.model_list[0].wrapper_prediction), tda.Posterior(my_prior, my_loglike[1], self.wrapper_prediction)]
+                my_posterior = [
+                    tda.Posterior(my_prior, my_loglike[0], self.model_list[0]._wrapper_prediction),
+                    tda.Posterior(my_prior, my_loglike[1], self._wrapper_prediction)
+                ]
             else:
+                # For more levels, set up the model hierarchy with previous steps.
                 for l in range(levels):
-                    self.model_list[i]._set_level(x_data=x_data,prev_steps=self.model_list[0:l],level=l+1)    
-
+                    self.model_list[l]._set_level(x_data=x_data, prev_steps=self.model_list[0:l], level=l+1)
+                
+                # Create log-likelihoods and posteriors for each level.
                 my_loglike = [tda.GaussianLogLike(y_obs, cov_likelihood) for _ in range(levels)]
-                my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i].wrapper_prediction) for i in range(levels)]
+                my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i]._wrapper_prediction) for i in range(levels)]
         else:
+            # Single-level case: set up likelihood and posterior.
             my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self.wrapper_prediction)
+            my_posterior = tda.Posterior(my_prior, my_loglike, self._wrapper_prediction)
 
-        if levels>1: 
+        # Ensure all models' inputs are set when multiple levels are used.
+        if levels > 1: 
             for i in range(levels):
-                self.model_list[i].inputs=x_data
+                self.model_list[i].inputs = x_data
 
+        # Default to the identity matrix for the RWMH proposal covariance if none is provided.
         if rwmh_cov is None:
             rwmh_cov = np.eye(len(x_real))
 
-        estimates, param_results = MCMC(my_posterior=my_posterior, N=N, burnin=burn_in, n=number_chains, diagnostic=diagnostic, rwmh_cov=rwmh_cov, rmwh_scaling=rmwh_scaling, rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential,dim=dim)
+        # Perform MCMC sampling, using the specified algorithm and settings.
+        estimates, param_results = MCMC(
+            my_posterior=my_posterior, 
+            N=N, 
+            burnin=burn_in, 
+            n=number_chains, 
+            diagnostic=diagnostic, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=rmwh_scaling, 
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            force_sequential=force_sequential,
+            dim=dim
+        )
 
+        # Generate histograms for visualization of estimates.
         if diagnostic:
-            plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
+            plot_hist(estimates, x_real, self._wrapper_prediction(estimates), self._wrapper_prediction(x_real), max_par)
         
+        # Compute the relative error between estimates and the true values (`x_real`).
         error = np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
         
-        return estimates, error, param_results    
-   
+        return estimates, error, param_results
+    
 
     @compute_time
-    def inverse_cuqi(self,mean_prior: np.ndarray, 
+    def inverse_cuqi(self,mean_prior: np.ndarray,                                   # MANCA RESTITUZIONE PARAMETRO FINALE paramresults
                     x_data: np.ndarray,
                     max_par:float,
                     x_real: Optional[np.ndarray] = None, 
@@ -364,33 +521,8 @@ class INetwork(ABC):
                     transformation: List = [], 
                     parallel: bool=False) -> Union[np.ndarray, float]:
         """
-        Perform Bayesian inference using the CUQI framework.
 
-        Parameters:
-        - mean_prior: np.ndarray : Prior mean
-        - x_data: np.ndarray : Input data
-        - max_par float: maximal value of the parameter to be estimated. Used only for graphical purposes
-        - x_real: Optional[np.ndarray] : Real data (optional)
-        - y_obs: Optional[np.ndarray] : Observed data (optional)
-        - N: int : Number of iterations (default: 1000)
-        - burn_in: int : Number of burn-in steps (default: 500)
-        - cov_prior: float : Covariance of the prior (default: 0.5)
-        - sd_noise: float : Standard deviation of noise (default: 0.1)
-        - adapt: bool : Whether to adapt the proposal distribution (default: False)
-        - scale: float : Scaling factor for the proposal distribution (default: 0.3)
-        - proposal_sd: float : Standard deviation of the proposal distribution (default: 0.3)
-        - x_init: Optional[Union[int, float, np.ndarray]] : Initial guess (default: None)
-        - diagnostic: bool : Whether to plot diagnostic information (default: True)
-        - number_chains: int : Number of MCMC chains (default: 1)
-        - algo: str : Algorithm to use ("MH" or "NUTS", default: "MH")
-        - transformation: List : List of transformations (default: [])
-        - parallel: bool: True to parallelize computation of Markov Chains
-        
-        Returns:
-        - estimates: np.ndarray : Estimated parameters
-        - error: float : Error with respect to true parameters
         """
-
         # Set inputs and transformations
         self.inputs = x_data
         self.transformations = transformation
@@ -424,10 +556,10 @@ class INetwork(ABC):
         m = x_real.shape[0]
         # Select algorithm and initialize CuqiModel and Gaussian objects
         if algo == "NUTS":
-            fun = Function(self.wrapper_prediction)
-            A = CuqiModel(forward=self.wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=range_geometry, domain_geometry=Discrete(m))
+            fun = Function(self._wrapper_prediction)
+            A = CuqiModel(forward=self._wrapper_prediction, jacobian=fun.compute_jacobian, range_geometry=range_geometry, domain_geometry=Discrete(m))
         else:
-            A = CuqiModel(forward=self.wrapper_prediction, range_geometry=range_geometry, domain_geometry=Discrete(m))
+            A = CuqiModel(forward=self._wrapper_prediction, range_geometry=range_geometry, domain_geometry=Discrete(m))
 
         x = Gaussian(mean=mean_prior, cov=cov_prior)
 
@@ -449,14 +581,14 @@ class INetwork(ABC):
 
         # Plot diagnostics if required
         if diagnostic:
-            plot_hist(estimates, x_real, self.wrapper_prediction(estimates), self.wrapper_prediction(x_real),max_par)
+            plot_hist(estimates, x_real, self._wrapper_prediction(estimates), self._wrapper_prediction(x_real),max_par)
 
         return estimates, error,parameters
 
     @staticmethod
     def save(self, file_path: str) -> None: 
         """ 
-        Save the trained LSTM model to a file. 
+        Save the trained Neural Network model to a file. 
         Args: 
             file_path (str): The path where the model will be saved. 
         """ 
@@ -465,13 +597,13 @@ class INetwork(ABC):
 
     def load(self, file_path: str) -> None: 
         """ 
-        Load a trained LSTM model from a file. 
+        Load a trained Neural Network model from a file. 
         Args: 
             file_path (str): The path from where the model will be loaded. 
         """ 
         self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
         self.input_shape=self.model.inputs[0][-1]
-        self.output_shape=self.model.outputs[0][-1]
+        self._output_shape=self.model.outputs[0][-1]
 
         print(f"Model loaded from {file_path}")
 
@@ -508,8 +640,6 @@ class INetwork(ABC):
         pass
 
 
-
-
 class Neural_Network(INetwork):
     
     def __init__(
@@ -525,7 +655,7 @@ class Neural_Network(INetwork):
         transformations: Optional[list] = None, 
         verbose: bool = False,
         device: str = '/CPU:0', 
-        profiler: TensorBoard = None
+        profiler: Optional[TensorBoard] = None
     ):
         """
         Initializes the Neural_Network instance.
@@ -541,38 +671,60 @@ class Neural_Network(INetwork):
             do_HPO (bool): Flag to indicate if hyperparameter optimization is to be performed.
             transformations (Optional[list]): List of transformations to apply to the data.
             verbose (bool): Flag to indicate verbosity of the output.
-            device (str): denotes GPU or CPU 
+            device (str): Device to use for training, either 'CPU' or 'GPU'.
+            profiler (Optional[TensorBoard]): TensorBoard profiler for monitoring training.
         """
+        # Clear any previous TensorFlow/Keras sessions to avoid clutter from old models.
         K.clear_session()
+
+        # Initialize instance variables
         self.name = name
-        self.type="NN"
-        self.params = params
-        self.N = N
-        self.n = n
+        self.type = "NN"
+        self._params = params
+        self._N = N
+        self._n = n
         self.verbose = verbose
         self.hist = None
-        self.data_train = data_train
-        self.output_train = output_train
+        self._data_train = data_train
+        self._output_train = output_train
         self.transformations = transformations if transformations is not None else []
         self.inputs = None
-        self.level=0
+        self.level = 0
+
         # Set input and output shapes based on training data dimensions
         self.input_shape = self._get_shape(data_train)
         self.output_shape = self._get_shape(output_train)
+
         # Perform hyperparameter optimization if required or if no parameters are provided
-        if do_HPO or params is None:
+        if do_HPO:
             if output_train is None or data_train is None:
                 warning_message = "Not enough data given!"
                 warnings.warn(warning_message, UserWarning)
-            self.params = self.HPO(data_train, output_train, device=device)
+            self._params = self.HPO(data_train, output_train, device=device)
+            print("New parameters identified during HPO:")
+            pprint(self._params)
 
-        # Initialize the model
-        self.model = getModel(self.params, self.input_shape, self.name, self.output_shape)
+        # Initialize the model with the given or optimized parameters
+        self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
 
-        # Train the model if required
-        if train:
-            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device, callbacks=profiler) 
+        # Train the model if required and if no HPO was performed
+        if train and output_train is not None:
+            self.hist = self.training(
+                data_train, 
+                output_train, 
+                epoch=self._N, 
+                batch=self._n, 
+                device=device, 
+                callbacks=profiler
+            )
+            # Plot training loss after training is complete
             self.plot_training_loss()
+
+    def summary(self) -> None:
+        """
+        Prints the summary of the model architecture.
+        """
+        self.model.summary()
 
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
         """
@@ -582,13 +734,13 @@ class Neural_Network(INetwork):
             data (Optional[np.ndarray]): The data to get the shape of.
 
         Returns:
-            int: The shape of the data.
+            int: The number of features in the data (second dimension).
         """
         return data.shape[1] if data is not None and len(data.shape) > 1 else 1
 
     def plot_training_loss(self) -> None:
         """
-        Plots the training loss.
+        Plots the training loss over the epochs.
         """
         if self.hist is not None and 'loss' in self.hist.history:
             plt.plot(self.hist.history['loss'][100:], label='Training Loss')
@@ -602,7 +754,15 @@ class Neural_Network(INetwork):
 
 
     @compute_time
-    def training(self, x: np.ndarray, y: np.ndarray, epoch: int, batch: int, device: str = '/CPU:0', callbacks: TensorBoard=None) -> Any:
+    def training(
+        self, 
+        x: np.ndarray, 
+        y: np.ndarray, 
+        epoch: int, 
+        batch: int, 
+        device: str = '/CPU:0', 
+        callbacks: Optional[TensorBoard] = None
+    ) -> Any:
         """
         Trains the model on the given data.
         
@@ -611,21 +771,19 @@ class Neural_Network(INetwork):
             y (np.ndarray): Training outputs.
             epoch (int): Number of epochs for training.
             batch (int): Batch size for training.
+            device (str): Device to use for training, either 'CPU' or 'GPU'.
+            callbacks (Optional[TensorBoard]): TensorBoard profiler for monitoring training.
 
         Returns:
             Any: The training history.
         """
-        if callbacks is not None:
-            with tf.device(device):
-
+        with tf.device(device):
+            if callbacks is not None:
                 self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0, callbacks=[callbacks])
-        else:
-            with tf.device(device):
-
+            else:
                 self.hist = self.model.fit(x, y, epochs=epoch, batch_size=batch, verbose=0)
         
         return self.hist
-
 
     def prediction(self, x_test: np.ndarray) -> np.ndarray:
         """
@@ -640,7 +798,7 @@ class Neural_Network(INetwork):
         if self.verbose:
             return self.model.predict(x_test)
         else:
-            with Suppressor():
+            with Suppressor():  # Suppress output if verbosity is off
                 return self.model.predict(x_test)
 
     def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
@@ -650,15 +808,18 @@ class Neural_Network(INetwork):
         Args:
             data_train (np.ndarray): Training data.
             output_train (np.ndarray): Training outputs.
+            device (str): Device to use for the optimization, either 'CPU' or 'GPU'.
 
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
-        print("HPO name ", self.name )
+        print("HPO name:", self.name)
+
         def objective(trial):
             K.clear_session()
-            tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial
+            tf.compat.v1.reset_default_graph()  # Ensure a clean graph for each trial
             
+            # Suggest hyperparameters
             params = {
                 "nodes": trial.suggest_int("nodes", 4, 64, log=True),
                 "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
@@ -668,132 +829,28 @@ class Neural_Network(INetwork):
             }
 
             with tf.device(device):
-                #loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-                loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
+                # Perform k-fold cross-validation to evaluate the model
+                loss = kCrossVal_parallel(self._n, self._N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
 
+        # Set logging level to avoid TensorFlow warnings
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
+
+        # Create an Optuna study for optimization
         storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study.db'
-        study = optuna.create_study(direction="minimize",storage=storage)
-        # Use n_jobs=2 since it is stable on your system
-        study.optimize(objective, n_trials=10, n_jobs=-1)
-        
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42),storage=storage)
+
+        # Optimize the objective function
+        study.optimize(objective, n_trials=15, n_jobs=-1)  # n_jobs=-1 uses all available CPUs
+
+        # Return the best hyperparameters found
         best_params = study.best_params
         return best_params
-    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
-    #     """
-    #     Performs hyperparameter optimization using Bayesian optimization.
-
-    #     Args:
-    #         data_train (np.ndarray): Training data.
-    #         output_train (np.ndarray): Training outputs.
-
-    #     Returns:
-    #         Dict[str, Any]: The best hyperparameters found.
-    #     """
-
-
-    #     #client = Client(n_workers=multiprocessing.cpu_count(), threads_per_worker=1)
-
-    #     def objective(trial):
-    #         K.clear_session()
-    #         params = {
-    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
-    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
-    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),  # Adjusted to use suggest_float
-    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
-    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
-
-    #         }
-    #         #with tf.device(device):
-    #         loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-            
-    #         return loss
-    #     #logging.getLogger('tensorflow').setLevel(logging.ERROR)
-    #     #tf.get_logger().setLevel('ERROR')
-    #     study = optuna.create_study(direction="minimize")
-    #     study.optimize(objective, n_trials=5, n_jobs=3)#, client=client)  # Parallelize trials
-    #     best_params = study.best_params
-    #     return best_params
-
-
-
-    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
-    #     """
-    #     Performs hyperparameter optimization using Bayesian optimization.
-
-    #     Args:
-    #         data_train (np.ndarray): Training data.
-    #         output_train (np.ndarray): Training outputs.
-
-    #     Returns:
-    #         Dict[str, Any]: The best hyperparameters found.
-    #     """
-    #     def objective(trial):
-    #         K.clear_session()
-    #         params = {
-    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
-    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
-    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
-    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
-    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
-    #         }
-    #         with tf.device(device):
-    #             model = getModel(params, self.input_shape, self.name, self.output_shape)
-    #             #model.compile(loss="mean_squared_error", optimizer=params["opt"])
-    #             score = kCrossVal(self.n, self.N, data_train, output_train, model, self.name, self.input_shape, self.output_shape)
-    #         return -score  # Maximize the score
-
-    #     logging.getLogger('tensorflow').setLevel(logging.ERROR)
-    #     tf.get_logger().setLevel('ERROR')
-    #     study = optuna.create_study(direction="maximize")
-    #     study.optimize(objective, n_trials=5, n_jobs=-1)
-    #     best_params = study.best_params
-    #     return best_params
-
-    # def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
-    #     def objective(trial):
-    #         K.clear_session()
-    #         params = {
-    #             "nodes": trial.suggest_int("nodes", 4, 64, log=True),
-    #             "l2weight": trial.suggest_float("l2weight", 1e-4, 1e-1, log=True),
-    #             "lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True),
-    #             "kernel_init": trial.suggest_categorical("kernel_init", ["uniform", "glorot_uniform"]),
-    #             "opt": trial.suggest_categorical("opt", ["Adam", "Adamax"]),
-    #         }
-    #         with tf.device(device):
-    #             loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-    #         return loss
-        
-    #     logging.getLogger('tensorflow').setLevel(logging.ERROR)
-    #     tf.get_logger().setLevel('ERROR')
-    #     study = optuna.create_study(direction="minimize")
-    #     study.optimize(objective, n_trials=5, n_jobs=-1)
-    #     # with parallel_backend('multiprocessing'):
-    #     #     study.optimize(objective, n_trials=5, n_jobs=-1)
-    #     best_params = study.best_params
-    #     return best_params
-
-# delete
-    def objective(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Objective function to minimize during hyperparameter optimization.
-
-        Args:
-            params (Dict[str, Any]): Hyperparameters to evaluate.
-
-        Returns:
-            Dict[str, Any]: The loss value and parameters.
-        """
-        K.clear_session()
-        loss = kCrossVal(self.n, self.N, self.data_train, self.output_train, params, self.name, self.input_shape, self.output_shape)
-        return {"loss": loss, "params": params, "status": STATUS_OK}
-
 
     def performance(self, data_test: np.ndarray, output_test: np.ndarray) -> Tuple[float, float]:
         """
-        Evaluate the performance of the model on test data.
+        Evaluates the performance of the model on test data.
 
         Args:
             data_test (np.ndarray): Test data.
@@ -802,97 +859,72 @@ class Neural_Network(INetwork):
         Returns:
             Tuple[float, float]: Test Mean Squared Error (MSE) and R^2 score.
         """
+        # Predict using the model
         pred = self.prediction(data_test)
 
+        # Ensure the output shape matches the prediction shape
         if len(output_test.shape) < len(pred.shape):
-            output_test = output_test[:, _]
+            output_test = output_test[:, np.newaxis]
         
-        test_mse = np.mean(np.square(output_test - pred))
+        # Calculate Mean Squared Error (MSE)
+        test_mse, r2 = calculate_metrics(output_test, pred)
         print(f"Test MSE: {test_mse}")
-
-        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
         print(f"R^2: {r2}")
         
-        return test_mse, r2   
+        return test_mse, r2
 
-
-    def save(self, path: str, identifier: str="_") -> None:
+    def _set_level(self, x_data: np.ndarray, prev_steps: List, level: int = 1) -> None:             # -------------------------usata dvoe?----------------------
         """
-        Save the NN model and the class instance.
+        Sets the level of the model and stores the input data and previous steps. Usefull in a multifidelity scenario
 
         Args:
-            path (str): Directory path to save the model and instance.
-            identifier (str): Identifier for the saved files.
+            x_data (np.ndarray): The input data for the model.
+            prev_steps (List): A list of models that have been used in previous steps.
+            level (int): The current level of the model (default is 1).
         """
-        # Ensure the directory exists
-        os.makedirs(path, exist_ok=True)
+        self.level = level
+        self.inputs = x_data 
+        self.prev_steps = prev_steps   # Stores the model list up to this point
 
-        # Save the Keras model separately
-        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
-        self.model.save(model_path)
-
-        # Save the class instance excluding the Keras model
-        temp_model = self.model
-        self.model = None
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'wb') as f:
-            pickle.dump(self, f)
-
-        # Restore the model attribute
-        self.model = temp_model
-
-    @classmethod
-    def load(cls, path: str, identifier: str) -> ' Neural_Network':
+    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:     # -------------------------usata dvoe?----------------------
         """
-        Load the NN model and the class instance.
+        Wraps the input for prediction, potentially combining it with previous model predictions.
 
         Args:
-            path (str): Directory path from which to load the model and instance.
-            identifier (str): Identifier for the saved files.
+            x_test (np.ndarray): The test data for prediction.
+            multi_input (bool): Flag indicating if the model expects multiple inputs.
 
         Returns:
-             Neural_Network: The loaded  Neural_Network instance.
+            np.ndarray: The final input array for prediction.
         """
-        with open(os.path.join(path, f'class_instance_{identifier}.pkl'), 'rb') as f:
-            instance = pickle.load(f)
-
-        model_path = os.path.join(path, f'NN_model_{identifier}.h5')
-        custom_objects = {
-            'mse': MeanSquaredError()  # Add any custom objects required by the model
-        }
-        instance.model = load_model(model_path, custom_objects=custom_objects)
-
-        return instance
-    
-
-    def _set_level(self, x_data:np.ndarray, prev_steps:List, level:int=1)-> None:
-        self.level=level
-        self.inputs=x_data 
-        self.prev_steps=prev_steps   # it contains the model_list up to this point
-
-    def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
         x_final = super()._input_wrapper_prediction(x_test, multi_input)
 
-        if self.level >1 :
-
-            for l in range(0,self.level-1):
+        if self.level > 1:
+            for l in range(0, self.level - 1):
                 x_final = np.concatenate((x_final, self.prev_steps[l]._wrapper_prediction(x_final, multi_input)), axis=1)
         
         return x_final
     
 class MultiFidelity(INetwork):
-        # REMARK: IN MULTIFIDELITY NN C'è LA POSSIBILTIà DI NON FARE TRAINING 
-    def __init__(self, 
-                 names: List[str], 
-                 params: Optional[List[dict]] = None, 
-                 data_train: Optional[List[np.ndarray]] = None, 
-                 output_train: Optional[List[np.ndarray]] = None, 
-                 N: Optional[List[int]] = None, 
-                 n: Optional[List[int]] = None, 
-                 do_HPO: bool = False, 
-                 verbose: bool = False,
-                 device: str ='/CPU:0', profiler: TensorBoard=None):
+    """
+    MultiFidelity network that allows for the sequential training and prediction of models
+    at different levels of fidelity.
+    """
+
+    def __init__(
+        self, 
+        names: List[str], 
+        params: Optional[List[dict]] = None, 
+        data_train: Optional[List[np.ndarray]] = None, 
+        output_train: Optional[List[np.ndarray]] = None, 
+        N: Optional[List[int]] = None, 
+        n: Optional[List[int]] = None, 
+        train: bool = True,
+        do_HPO: bool = False, 
+        verbose: bool = False,
+        device: str = '/CPU:0', 
+        profiler: Optional[TensorBoard] = None
+    ):
         """
         Initialize MultiFidelity network.
 
@@ -903,47 +935,58 @@ class MultiFidelity(INetwork):
             output_train (Optional[List[np.ndarray]]): Training outputs for each network.
             N (Optional[List[int]]): Number of epochs for each network.
             n (Optional[List[int]]): Batch sizes for each network.
+            train (bool): Whether to train the network
             do_HPO (bool): Whether to perform hyperparameter optimization.
             verbose (bool): Whether to print verbose output.
-            device (str): denotes GPU or CPU 
+            device (str): Device to use for training ('/CPU:0' or '/GPU:0').
+            profiler (Optional[TensorBoard]): TensorBoard profiler for monitoring training.
         """
+        # Initialize attributes
         self.names = names
-        self.Ns = N if N is not None else [1000] * len(names) 
-        self.ns = n if n is not None else [10] * len(names)  
-        self.data_train = data_train
-        self.output_train=output_train
-        self.steps = int((len(names) - 1) / (len(data_train) - 1)) + 1
-        self.model_list = []
-        self.transformations = []
+        self._Ns = N if N is not None else [1000] * len(names)  # Set default epochs if not provided
+        self._ns = n if n is not None else [10] * len(names)  # Set default batch sizes if not provided
+        self._data_train = data_train
+        self._output_train = output_train
+        self.steps = int((len(names) - 1) / (len(data_train) - 1)) + 1  # Calculate number of steps
+        self.model_list = []  # To store models for each fidelity level
+        self.transformations = []  # Store transformations if any (currently not used)
         self.input_shape = 1
         self.output_shape = 1
-       
-        if not data_train or not output_train or len(data_train) != len(output_train):
-            raise ValueError('The data are incoherent or insufficient')
 
+        # Validate the provided training data and output data
+        if not data_train or not output_train or len(data_train) != len(output_train):
+            raise ValueError('The training and output data are either incoherent or insufficient.')
+
+        # Set input and output shapes based on the first dataset
         if data_train and len(data_train[0].shape) > 1:
             self.input_shape = data_train[0].shape[1]
-
         if output_train and len(output_train[0].shape) > 1:
             self.output_shape = output_train[0].shape[1]
 
+        # Clear the previous TensorFlow session
         K.clear_session()
+
+        # Ensure `params` list is the same length as `names`, filling with `None` if necessary
         if params is None:
             params = [None] * len(names)
         elif len(params) < len(names):
             params += [None] * (len(names) - len(params))
 
-        #count = 1
-        data_train_support=data_train[0]
+        self._params=params
+        # Initialize training data for the first model
+        data_train_support = data_train[0]
+
+        # Iterate over the network names to create and train each model
         for index, name in enumerate(names):
+            # Build and train the network for the current fidelity level
             model = NetworkFactory.build_network(
                 name,
                 params=params[index],
-                data_train=data_train_support, #[count - 1],
-                output_train=output_train[index],#][count - 1],
-                N=self.Ns[index],
-                n=self.ns[index],#[count - 1],
-                train=True,
+                data_train=data_train_support,     # Use current training data
+                output_train=output_train[index],  # Use corresponding output data
+                N=self._Ns[index],
+                n=self._ns[index],
+                train=train,
                 do_HPO=do_HPO,
                 verbose=verbose,
                 device=device,
@@ -951,17 +994,13 @@ class MultiFidelity(INetwork):
             )
             self.model_list.append(model)
 
-            if (index+1)<len(data_train):
-
-                data_train_support=data_train[index+1]
-
-                for l in range(index+1):
-                    data_train_support=np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
-            # if (index + 1) == (self.steps - 1) * (count - 1) + 1:
-            #     count += 1
-            # for i in range(count - 1, len(data_train)):
-            #     data_train[i] = np.c_[data_train[i], model.prediction(data_train[i])]
-
+            # Update training data for the next model, if any
+            if (index + 1) < len(data_train) and train:
+                data_train_support = data_train[index + 1]
+                
+                # Incorporate predictions from previous models into the training data
+                for l in range(index + 1):
+                    data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
 
     def plot_training_loss(self) -> None:
         """
@@ -971,9 +1010,56 @@ class MultiFidelity(INetwork):
             model.plot_training_loss()
 
 
-    
-    # FUNZIONE PER TRAINING
-    # FUNZIONE PER HPO
+    @property
+    def params(self) -> List[dict]:
+        """Get the hyperparameters of each network."""
+        return [model.params for model in self.model_list]
+
+    @params.setter
+    def params(self, value: List[dict]) -> None:
+        """Sets the hyperparameters, ensuring they are provided as a list."""
+        if not isinstance(value, list):
+            raise TypeError("Params must be a list.")
+        
+        if len(value) != len(self.model_list):
+            raise ValueError("Number of parameter sets must be equal to the number of networks.")
+
+        for i in range(len(self.model_list)):
+            self.model_list[i].params = value[i]
+
+    @property
+    def N(self) -> List[int]:
+        """Get the number of epochs for each network."""
+        return [model.N for model in self.model_list]
+
+    @N.setter
+    def N(self, value: List[int]) -> None:
+        """Sets the number of epochs, ensuring it's provided as a list."""
+        if not isinstance(value, list):
+            raise ValueError("N must be a list.")
+        
+        if len(value) != len(self.model_list):
+            raise ValueError("Number of epochs must be equal to the number of networks.")
+
+        for i in range(len(self.model_list)):
+            self.model_list[i].Ns = value[i]
+
+    @property
+    def n(self) -> List[int]:
+        """Get the batch sizes for each network."""
+        return [model.n for model in self.model_list]
+
+    @n.setter
+    def n(self, value: List[int]) -> None:
+        """Sets the batch sizes, ensuring they're provided as a list."""
+        if not isinstance(value, list):
+            raise ValueError("n must be a list.")
+        
+        if len(value) != len(self.model_list):
+            raise ValueError("Number of batch sizes must be equal to the number of networks.")
+
+        for i in range(len(self.model_list)):
+            self.model_list[i].ns = value[i]
 
     def performance(self, data_test: np.ndarray, output_test: np.ndarray, position: Optional[int] = None) -> Tuple[float, float]:
         """
@@ -987,33 +1073,40 @@ class MultiFidelity(INetwork):
         Returns:
             Tuple[float, float]: Test Mean Squared Error (MSE) and R^2 score.
         """
+        # If no specific model is specified, evaluate the last model
         if position is None:
             position = len(self.model_list)
         elif not isinstance(position, int) or position > len(self.model_list):
-            raise ValueError('The required NN is not existent')
+            raise ValueError('The required model does not exist.')
 
+        # Copy test data to avoid modifying the original input
         data = copy.copy(data_test)
 
+        # Generate predictions sequentially for each preceding model up to the specified position
         for i in range(position - 1):
-            pred=self.model_list[i].prediction(data)
-            if len(pred.shape)<=1:
+            pred = self.model_list[i].prediction(data)
+            if len(pred.shape) <= 1:
                 data = np.c_[data, pred.reshape(-1, 1)]
             else:
                 data = np.c_[data, pred]
 
-
+        # Final prediction for the specified model
         pred = self.model_list[position - 1].prediction(data)
 
+        # Adjust output shape if necessary
         if len(output_test.shape) < len(pred.shape):
             output_test = output_test[:, np.newaxis]
 
-        test_mse = np.mean(np.square(output_test - pred))
+        test_mse, r2 = calculate_metrics(output_test, pred)
         print(f"Test MSE: {test_mse}")
-
-        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
         print(f"R^2: {r2}")
 
         return test_mse, r2
+
+    def summary(self) -> None:
+        for Model in self.model_list:
+            Model.summary()
+
 
     def prediction(self, data_test: np.ndarray) -> np.ndarray:
         """
@@ -1027,58 +1120,110 @@ class MultiFidelity(INetwork):
         """
         self.outputs = data_test
 
+        # Reshape outputs if necessary
         if len(self.outputs.shape) == 1:
             self.outputs = self.outputs.reshape(-1, 1)
 
+        # Sequentially generate predictions from each model and append to the output
         for index in range(len(self.names)):
             self.outputs = np.c_[self.outputs, self.model_list[index].prediction(self.outputs)]
 
-        return self.outputs[:, -self.output_shape:]
+        return self.outputs[:, -self.output_shape:]  # Return only the final model's prediction
 
-    def save(self, path: str, identifier: str = "_") -> None:
+    @staticmethod
+    def save(self, file_paths: List[str]) -> None: 
+        """ 
+        Save the trained Neural networks model to a file. 
+        Args: 
+            file_paths (List[str]): The path where the model will be saved. 
+        """ 
+
+        for i,Model in enumerate(self.model_list):
+            Model.save(file_paths[i])
+
+
+    def load(self, file_paths: List[str]) -> None: 
+        """ 
+        Load a trained Neural networks model from a file. 
+        Args: 
+            file_paths (List[str]): The path from where the model will be loaded. 
         """
-        Save all models in the model_list to the specified path.
+        self.model_list=[]
 
-        Args:
-            path (str): Directory to save the models.
-            identifier (str): Identifier to append to the model names.
-        """
-        # Ensure the directory exists
-        os.makedirs(path, exist_ok=True)
+        for i in range(len(file_paths)):
 
-        # Save each model in the model_list with a unique identifier
-        for index, model in enumerate(self.model_list):
-            model_name = identifier + self.names[index]
-            model.save(os.path.join(path, f'model_{model_name}.h5'))
+            self.model_list.append(load_model(file_paths[i], custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) )
 
-    def training(self):
-        pass
+        self.input_shape=self.model_list[0].inputs[0][-1]
+        self.output_shape=self.model_list[-1].outputs[0][-1]
+
+    def training(self,device: str = '/CPU:0', profiler: Optional[TensorBoard] = None):
+                # Iterate over the network names to create and train each model
+        if self._params==None:
+            raise ValueError("params list is empty")
+        
+        if self._data_train==None or self._output_train==None:
+            raise ValueError("Not enough data given")
+        
+        data_train_support = self._data_train[0]
+
+        for index, name in enumerate(self.names):
+            # Build and train the network for the current fidelity level
+            model = NetworkFactory.build_network(
+                name,
+                params=self._params[index],
+                data_train=data_train_support,  # Use current training data
+                output_train=self._output_train[index],  # Use corresponding output data
+                N=self._Ns[index],
+                n=self._ns[index],
+                train=True,
+                do_HPO=False,
+                verbose=False,
+                device=device,
+                profiler=profiler
+            )
+            self.model_list.append(model)
+
+            # Update training data for the next model, if any
+            if (index + 1) < len(self._data_train):
+                data_train_support = self._data_train[index + 1]
+                
+                # Incorporate predictions from previous models into the training data
+                for l in range(index + 1):
+                    data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
     
-    def HPO(self):
-        pass
+    def HPO(self,device: str = '/CPU:0', profiler: Optional[TensorBoard] = None):
+        if self._params==None:
+            raise ValueError("params list is empty")
+        
+        if self._data_train==None or self._output_train==None:
+            raise ValueError("Not enough data given")
     
-    @classmethod
-    def load(cls, path: str, identifier: str) -> 'MultiFidelity':
-        """
-        Load all models into the model_list from the specified path.
+        data_train_support = self._data_train[0]
 
-        Args:
-            path (str): Directory from which to load the models.
-            identifier (str): Identifier used in the model names.
+        for index, name in enumerate(self.names):
+            # Build and train the network for the current fidelity level
+            model = NetworkFactory.build_network(
+                name,
+                params=self._params[index],
+                data_train=data_train_support,  # Use current training data
+                output_train=self._output_train[index],  # Use corresponding output data
+                N=self._Ns[index],
+                n=self._ns[index],
+                do_HPO=True,
+                verbose=False,
+                device=device,
+                profiler=profiler
+            )
+            self.model_list.append(model)
 
-        Returns:
-            MultiFidelity: An instance of the MultiFidelity class with loaded models.
-        """
-        # Create an instance of MultiFidelity without training data
-        instance = cls(names=[], params=[], data_train=[], output_train=[], N=[], n=[])
-
-        # Load each model from the specified path
-        for name in instance.names:
-            model_path = os.path.join(path, f'model_{identifier + name}.h5')
-            model = Neural_Network.load(model_path, identifier + name)
-            instance.model_list.append(model)
-
-        return instance
+            # Update training data for the next model, if any
+            if (index + 1) < len(self._data_train):
+                data_train_support = self._data_train[index + 1]
+                
+                # Incorporate predictions from previous models into the training data
+                for l in range(index + 1):
+                    data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
 
 
     def get_output(self) -> np.ndarray:
@@ -1088,7 +1233,7 @@ class MultiFidelity(INetwork):
         Returns:
             np.ndarray: The last output.
         """
-        return self.model_list[-1].prediction(self.data_train[-1])
+        return self.model_list[-1].prediction(self._data_train[-1])
 
 
 class LSTM_network(INetwork):
@@ -1122,13 +1267,13 @@ class LSTM_network(INetwork):
             device (str): denotes GPU or CPU 
 
         """
-        self.params = params
+        self._params = params
         self.name = name 
-        self.N = N
+        self._N = N
         self.verbose = verbose
         self.hist = None
-        self.data_train = data_train
-        self.output_train = output_train
+        self._data_train = data_train
+        self._output_train = output_train
         self.transformations = transformations
         self.input_shape = 1
         self.output_shape = 1
@@ -1150,23 +1295,23 @@ class LSTM_network(INetwork):
 
 
         # Perform hyperparameter optimization if required       
-        if self.params is None and train:
+        if self._params is None and train:
                 warnings.warn("Not enough data given!", UserWarning)
             
         if do_HPO:
-            self.params = self.HPO(data_train, output_train,device=device)
+            self._params = self.HPO(data_train, output_train,device=device)
         # if do_HPO or params is None:
         #     if output_train is None or data_train is None:
         #         warnings.warn("Not enough data given!", UserWarning)
         #     self.params = self.HPO(data_train, output_train,device=device)
         
         # Initialize the model
-        if self.params is not None:
-            self.model = getModel(self.params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
+        if self._params is not None:
+            self.model = getModel(self._params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
 
             # Train the model if required
             if train: 
-                self.hist = self.training(int(self.params['sequence_length']),int(self.params['sequence_freq']),epoch=self.N,device=device) 
+                self.hist = self.training(int(self._params['sequence_length']),int(self._params['sequence_freq']),epoch=self._N,device=device) 
                 self.plot_training_loss()
 
         else: 
@@ -1175,7 +1320,7 @@ class LSTM_network(INetwork):
         # if no params, no dataset, no HPO, then you must load
 
     def set_parameters(self, params: Optional[dict] )->None:
-        self.params=params
+        self._params=params
 
 
     @compute_time
@@ -1193,9 +1338,9 @@ class LSTM_network(INetwork):
         """
         self.sequence_length = seq_length
         self.sequence_freq = seq_freq
-        self.input_train_seq, self.output_train_seq = self._sliding_windows(self.data_train, self.output_train, self.sequence_length, self.sequence_freq)
+        self.input_train_seq, self.output_train_seq = self._sliding_windows(self._data_train, self._output_train, self.sequence_length, self.sequence_freq)
 
-        callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self.params['patience'], restore_best_weights=True)
+        callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self._params['patience'], restore_best_weights=True)
         tf.keras.utils.set_random_seed(29)
         tf.config.experimental.enable_op_determinism() # for reproducibility
         # with tf.device(device):
@@ -1254,7 +1399,7 @@ class LSTM_network(INetwork):
 
         # Iterate through the model list and make predictions
         for i in range(position - 1):
-            data = np.concatenate((data, self.model_list[i].wrapper_prediction(data).reshape(-1, 1)), axis=1)
+            data = np.concatenate((data, self.model_list[i]._wrapper_prediction(data).reshape(-1, 1)), axis=1)
 
         # Predict using the specified model
         pred = self.model_list[position - 1].prediction(data)
@@ -1263,34 +1408,11 @@ class LSTM_network(INetwork):
         if len(output_test.shape) < len(pred.shape):
             output_test = output_test[:, np.newaxis]
             
-        test_mse = np.mean(np.square(output_test - pred))
+        test_mse, r2 = calculate_metrics(output_test, pred)
         print(f"Test MSE: {test_mse}")
-
-        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
         print(f"R^2: {r2}")
 
         return test_mse, r2
-
-    # def save(self, file_path: str) -> None: 
-    #     """ 
-    #     Save the trained LSTM model to a file. 
-    #     Args: 
-    #         file_path (str): The path where the model will be saved. 
-    #     """ 
-    #     self.model.save(file_path) 
-    #     print(f"Model saved to {file_path}") 
- 
-    # def load(self, file_path: str) -> None: 
-    #     """ 
-    #     Load a trained LSTM model from a file. 
-    #     Args: 
-    #         file_path (str): The path from where the model will be loaded. 
-    #     """ 
-    #     self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
-    #     self.input_shape=self.model.inputs[0][-1]
-    #     self.output_shape=self.model.outputs[0][-1]
-
-    #     print(f"Model loaded from {file_path}")
 
     def _sliding_windows(self, data_input, data_output, seq_length, freq=1):
         """
@@ -1446,13 +1568,13 @@ class LSTM_network(INetwork):
             
             with tf.device(device):
 
-                loss = kCrossVal_parallel(N=self.data_train.shape[0], Nepo=self.N, x=data_train, y=output_train, 
+                loss = kCrossVal_parallel(N=self._data_train.shape[0], Nepo=self._N, x=data_train, y=output_train, 
                                         params=params, name=self.name, input_shape=self.input_shape, 
                                         output_shape=self.output_shape, p=5, n_jobs=-1)
             return loss
 
         study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=20, n_jobs=-1)
+        study.optimize(objective, n_trials=10, sampler=optuna.samplers.TPESampler(seed=42), n_jobs=-1)
         best_params = study.best_params
         return best_params
     
@@ -1488,13 +1610,13 @@ class Intermediate(INetwork):
             verbose (bool): Whether to print verbose output.
         """
         self.name = name
-        self.params = params
-        self.N = N
-        self.n = n
+        self._params = params
+        self._N = N
+        self._n = n
         self.verbose = verbose
         self.hist = None
-        self.data_train = data_train
-        self.output_train = output_train
+        self._data_train = data_train
+        self._output_train = output_train
         self.input_shape = 1
         self.output_shape = 1
         self.inputs = None
@@ -1514,13 +1636,13 @@ class Intermediate(INetwork):
         if do_HPO or params is None:
             if output_train is None or data_train is None:
                 warnings.warn("Not enough data given!", UserWarning)
-            self.params = self.HPO(data_train, output_train,device=device)
+            self._params = self.HPO(data_train, output_train,device=device)
 
         # Create the model
-        self.model = getModel(self.params, self.input_shape, self.name, self.output_shape)
+        self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
 
         if train:
-            self.hist = self.training(data_train, output_train, epoch=self.N, batch=self.n,device=device) 
+            self.hist = self.training(data_train, output_train, epoch=self._N, batch=self._n,device=device) 
             self.plot_training_loss()
 
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
@@ -1606,12 +1728,8 @@ class Intermediate(INetwork):
         if len(output_test.shape) < len(pred.shape):
             output_test = output_test[:, _]
         
-        test_mse = np.mean(np.square(output_test - pred))
+        test_mse, r2 = calculate_metrics(output_test, pred)
         print(f"Test MSE: {test_mse}")
-
-        r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(
-            np.square(output_test - np.mean(output_test))
-        )
         print(f"R^2: {r2}")
         
         return test_mse, r2   
@@ -1627,7 +1745,7 @@ class Intermediate(INetwork):
             Dict[str, Any]: Result of cross-validation.
         """
         K.clear_session()
-        loss = kCrossVal(self.n, self.N, self.data_train, self.output_train, params, self.name, self.input_shape, self.output_shape)
+        loss = kCrossVal(self._n, self._N, self._data_train, self._output_train, params, self.name, self.input_shape, self.output_shape)
         return {"loss": loss, "params": params, "status": STATUS_OK}
 
     def HPO(self, data_train: np.ndarray, output_train: np.ndarray, device: str = '/CPU:0') -> Dict[str, Any]:
@@ -1656,13 +1774,13 @@ class Intermediate(INetwork):
 
             with tf.device(device):
                 #loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-                loss = kCrossVal_parallel(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
+                loss = kCrossVal_parallel(self._n, self._N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
             return loss
 
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
         storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study_LSTM.db'
-        study = optuna.create_study(direction="minimize",storage=storage)
+        study = optuna.create_study(direction="minimize",sampler=optuna.samplers.TPESampler(seed=42),storage=storage)
         # Use n_jobs=2 since it is stable on your system
         study.optimize(objective, n_trials=4, n_jobs=-1)
         

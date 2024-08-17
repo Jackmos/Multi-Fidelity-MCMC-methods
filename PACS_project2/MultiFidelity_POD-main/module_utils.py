@@ -587,7 +587,7 @@ def run_simulation(
     error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
     error = np.zeros(error_shape)
     estimates = np.zeros(error_shape)
-    
+    param_final=[]
     # Iterate over all combinations of parameters using itertools.product
     for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
         t_eval = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), n).reshape(-1, 1)  # Generate evaluation times
@@ -595,7 +595,7 @@ def run_simulation(
         cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
         
         # Perform parameter estimation and calculate error
-        estimates[i, k,t, j], error[i, k, t, j], param_final = final_model.param_inverse(
+        estimates[i, k,t, j], error[i, k, t, j], par = final_model.param_inverse(
             mean_prior=mean_prior, 
             x_data=t_eval, 
             max_par=max(datahf[:,1]),
@@ -618,7 +618,7 @@ def run_simulation(
             fwd_LSTM_folder=fwd_LSTM_folder
 
         )
-    
+        param_final.append(par)
     # Identify the index of the minimum error
     smallest_index = np.unravel_index(np.argmin(error), error.shape)
     best_estimate = estimates[smallest_index]
