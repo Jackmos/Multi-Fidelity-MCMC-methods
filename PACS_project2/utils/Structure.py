@@ -876,8 +876,7 @@ class Neural_Network(INetwork):
                 data_train, 
                 output_train, 
                 epoch=self._N, 
-                batch=self._n, 
-                device=device, 
+                batch=self._n,  
                 callbacks=profiler
             )
             # Plot training loss after training is complete
@@ -950,7 +949,7 @@ class Neural_Network(INetwork):
         """
 
         # Enable mixed precision training for memory optimization
-        if device.startswith('/GPU'):
+        if self.device.startswith('/GPU'):
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
 
@@ -1522,7 +1521,7 @@ class LSTM_network(INetwork):
         callback = tf.keras.callbacks.EarlyStopping(monitor='mse', patience=self._params['patience'], restore_best_weights=True)
 
         # Enable mixed precision training for memory optimization
-        if device.startswith('/GPU'):
+        if self.device.startswith('/GPU'):
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
 
