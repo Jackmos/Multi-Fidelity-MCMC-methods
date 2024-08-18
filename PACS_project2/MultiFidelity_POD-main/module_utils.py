@@ -231,7 +231,8 @@ def custom_loss(y_pred,y_true):
     return K.mean(K.square(y_pred_loss - y_pred_true))
 
 
-
+def sinusoidal_activation(x):
+    return K.square(K.sin(x))
 
 
 def getOpti(name,lr):
@@ -336,12 +337,20 @@ def getModel(params,num_inputs,name,num_outputs):
             a = Dropout(params['dropout'])(a)
             a = LSTM(params['nodes'], return_sequences=True)(a)
         
-        # Adding a Fourier Layer
-        a = FourierLayer(output_dim=params['nodes'])(a)
-        
+        # # Adding a Fourier Layer
+        # a = FourierLayer(output_dim=params['nodes'])(a)
+
+        a = Dense(
+            units=64,
+            activation=sinusoidal_activation,
+            #kernel_regularizer=l2(params["l2weight"]),
+            kernel_initializer='uniform'
+        )(a)   
+
         for i in range(params['lay_dense']):
             a = Dense(params['nodes_dense'], activation=custom_activation)(a)
-            
+
+  
         output = Dense(num_outputs, activation='linear')(a)
 
 

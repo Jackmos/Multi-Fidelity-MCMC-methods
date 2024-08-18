@@ -291,13 +291,12 @@ def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray,
 
 
 
-def kCrossVal_parallel(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
+def kCrossVal_parallel( Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
                        name: str, input_shape: int, output_shape: int, p: int = 2, n_jobs: int = -1) -> float:
     """
     Perform k-fold cross-validation on the model using parallel processing.
 
     Args:
-        N (int): Total number of samples.
         Nepo (int): Number of epochs for training.
         x (np.ndarray): Training data.
         y (np.ndarray): Training outputs (expected to have 2 columns).
