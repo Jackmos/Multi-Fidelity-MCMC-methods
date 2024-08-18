@@ -784,13 +784,6 @@ class INetwork(ABC):
         """
         pass
 
-    @abstractmethod
-    def performance(self) -> None:
-        """
-        Abstract method to be implemented for evaluating the network's performance.
-        Subclasses must provide the implementation for this method.
-        """
-        pass
 
     @abstractmethod
     def HPO(self) -> None:
@@ -862,15 +855,15 @@ class Neural_Network(INetwork):
         self.device = device
 
         # Set input and output shapes based on training data dimensions
-        self.input_shape = self._get_shape(data_train)
-        self.output_shape = self._get_shape(output_train)
+        self.input_shape = self._get_shape(self._data_train)
+        self.output_shape = self._get_shape(self._output_train)
 
         # Perform hyperparameter optimization if required or if no parameters are provided
         if do_HPO:
             if output_train is None or data_train is None:
                 warning_message = "Not enough data given for HPO!"
                 warnings.warn(warning_message, UserWarning)
-            self._params = self.HPO(data_train, output_train, device=device)
+            self._params = self.HPO(data_train, output_train)
             print("New parameters identified during HPO:")
             pprint(self._params)
 
@@ -906,7 +899,6 @@ class Neural_Network(INetwork):
     #         print(f"{self.name} instance has been destroyed and resources have been freed.")
 
 
-    @staticmethod
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
         """
         Gets the shape of the data.
@@ -1029,8 +1021,9 @@ class Neural_Network(INetwork):
         tf.get_logger().setLevel('ERROR')
 
         # Create an Optuna study for optimization
-        storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study.db'
-        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42),storage=storage)
+        current_directory = os.getcwd()
+        storage_path = os.path.join(current_directory, 'optuna_study.db')
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42),storage=f'sqlite:///{storage_path}')
 
         # Optimize the objective function
         study.optimize(objective, n_trials=15, n_jobs=-1) # Bayesian optimization
@@ -1642,7 +1635,10 @@ class LSTM_network(INetwork):
             return loss
 
         # Optimize using Optuna
-        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
+        # Create an Optuna study for optimization
+        current_directory = os.getcwd()
+        storage_path = os.path.join(current_directory, 'optuna_study.db')
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42),storage=f'sqlite:///{storage_path}')
         study.optimize(objective, n_trials=10, n_jobs=-1) # Bayesian optimization
         best_params = study.best_params
         return best_params
@@ -1916,8 +1912,13 @@ class Intermediate(INetwork):
 
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
-        storage = 'sqlite:///C:/Users/Giacomo/Documents/GitHub/pacs_new/PACS_project2/optuna_study_LSTM.db'
-        study = optuna.create_study(direction="minimize",sampler=optuna.samplers.TPESampler(seed=42),storage=storage)
+        
+        
+        # Create an Optuna study for optimization
+        current_directory = os.getcwd()
+        storage_path = os.path.join(current_directory, 'optuna_study.db')
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42),storage=f'sqlite:///{storage_path}')
+
         # Use n_jobs=2 since it is stable on your system
         study.optimize(objective, n_trials=4, n_jobs=-1)
         
