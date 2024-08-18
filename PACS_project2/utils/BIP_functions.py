@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import arviz as az
-from typing import Any, Tuple, List
+from typing import Any, Tuple, List, Union
 import ray
 import os
 import logging
@@ -12,6 +12,12 @@ from cuqi.distribution import JointDistribution
 from cuqi.sampler import MH, NUTS, pCN
 from datetime import datetime
 import uuid
+import warnings
+
+# Suppress specific UserWarnings and RuntimeWarnings
+warnings.filterwarnings("ignore", category=UserWarning, message="qoi group is not defined in the InferenceData scheme")
+warnings.filterwarnings("ignore", category=UserWarning, message="Your data appears to have a single value or no finite values")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in scalar divide")
 
 
 def MCMC(
@@ -24,15 +30,36 @@ def MCMC(
     rmwh_scaling: float = 0.1, 
     period: int = 100, 
     t0: int = 0, 
-    subsampling_rate: Any = 1,
+    subsampling_rate: Union[int, List[int]] = 1,  # Modified type hint for subsampling_rate to allow int or list of ints
     rwmh_adaptive: bool = False, 
     algo: str = "MH", 
     dim: int = 0,
     force_sequential: bool = False
 ) -> np.ndarray:
     """
-    Perform MCMC sampling and save diagnostics and results.
+    Perform MCMC sampling using TinyDA and save diagnostics and results.
+    
+    Parameters:
+    - my_posterior (List[Any]): The posterior distribution to sample from.
+    - N (int): Number of MCMC iterations.
+    - burnin (int): Number of burn-in iterations to discard.
+    - n (int): Number of chains to run. Default is 1.
+    - diagnostic (bool): Whether to output diagnostics. Default is True.
+    - rwmh_cov (np.ndarray): Covariance matrix for the random walk Metropolis-Hastings proposal. Default is None.
+    - rmwh_scaling (float): Scaling factor for the proposal distribution. Default is 0.1.
+    - period (int): Period for updating the proposal if adaptive. Default is 100.
+    - t0 (int): Initial iteration for adaptation. Default is 0.
+    - subsampling_rate (Union[int, List[int]]): Rate or rates of subsampling the posterior. Default is 1.
+    - rwmh_adaptive (bool): Whether to use an adaptive proposal. Default is False.
+    - algo (str): Algorithm to use ('MH', 'AM', 'CN', 'DREAMZ'). Default is 'MH'.
+    - dim (int): Dimensionality of the posterior distribution. Default is 0.
+    - force_sequential (bool): Whether to force sequential sampling. Default is False.
+
+    Returns:
+    - estimates (np.ndarray): Estimated parameter means.
+    - dict: A dictionary containing summary statistics.
     """
+
     # Create a unique folder name for saving outputs
     # Convert key parameters to strings that are safe to use in a file path
     rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov, precision=2).replace("\n", "")
@@ -48,9 +75,10 @@ def MCMC(
     folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
     os.makedirs(folder_name, exist_ok=True)
 
-    MAP = get_MAP(my_posterior[-1]) if dim != 1 else None
+    # Obtain the Maximum A Posteriori (MAP) estimate for the initial parameters
+    MAP = get_MAP(my_posterior[-1])  # For the last element in the posterior
 
-    # Set up the proposal based on the chosen algorithm
+    # Set up the proposal distribution based on the chosen algorithm
     if algo == "MH":
         my_proposal = GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo == "AM":
@@ -59,26 +87,30 @@ def MCMC(
         my_proposal = CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive, period=period)
     elif algo == "DREAMZ":
         my_proposal = DREAMZ(M0=10 * dim, adaptive=rwmh_adaptive, period=period)
-    elif algo == "MLDA":
-        if len(my_posterior) <= 2:
-            raise ValueError("MLDA function requires at least 3 posteriors")
-        my_proposal = MLDA(
-            posteriors=my_posterior, subsampling_rates=[5]*len(my_posterior-1),
-            adaptive_error_model='state-independent', initial_parameters=MAP,
-            store_coarse_chain=True, proposal=AdaptiveMetropolis(C0=rwmh_cov)
-        )
     else:
         raise ValueError(f"Unknown algorithm {algo}")
-    
-    # Perform sampling
-    my_chains = sample(my_posterior, my_proposal, iterations=N, n_chains=n, subsampling_rate=subsampling_rate, force_sequential=force_sequential, initial_parameters=MAP)
-    
+
+    # Ensure subsampling_rate is a list of ints
+    if isinstance(subsampling_rate, int):
+        subsampling_rate = [subsampling_rate] * (len(my_posterior) - 1)
+
+    # Perform MCMC sampling
+    my_chains = sample(
+        my_posterior, 
+        my_proposal, 
+        iterations=N, 
+        n_chains=n, 
+        subsampling_rate=subsampling_rate, 
+        force_sequential=force_sequential, 
+        initial_parameters=MAP
+    )
+
+    # Convert the chains into inference data
     if isinstance(my_posterior, list):
-        if len(my_posterior)>1:
-            idata = to_inference_data(my_chains, level='fine',burnin=burnin)
+        if len(my_posterior) > 1:
+            idata = to_inference_data(my_chains, level=(len(my_posterior) - 1), burnin=burnin)
         else:
             idata = to_inference_data(my_chains, burnin=burnin)
-
     else:
         idata = to_inference_data(my_chains, burnin=burnin)
 
@@ -92,17 +124,17 @@ def MCMC(
     if diagnostic:
         print(summary)
 
-        az.plot_trace(idata)
-        plt.show()
-        # Save diagnostic plots
+        # Plot and save trace plots
         az.plot_trace(idata)
         plt.savefig(os.path.join(folder_name, "trace_plot.png"))
         plt.close()
 
+        # Plot and save autocorrelation plots
         az.plot_autocorr(idata)
         plt.savefig(os.path.join(folder_name, "autocorrelation_plot.png"))
         plt.close()
 
+        # Plot and save ESS (Effective Sample Size) plots
         az.plot_ess(idata)
         plt.savefig(os.path.join(folder_name, "ess_plot.png"))
         plt.close()
@@ -111,6 +143,7 @@ def MCMC(
         plt.savefig(os.path.join(folder_name, "ess_local_plot.png"))
         plt.close()
 
+        # Plot and save rank plots
         az.plot_rank(idata)
         plt.savefig(os.path.join(folder_name, "rank_plot.png"))
         plt.close()
@@ -132,6 +165,7 @@ def MCMC(
         'r_hat': summary['r_hat']
     }
 
+
 def MCMC_cuqi(
     y: Any, 
     x: Any, 
@@ -148,40 +182,73 @@ def MCMC_cuqi(
 ) -> np.ndarray:
     """
     Perform MCMC sampling using CUQI library.
+
+    Parameters:
+    - y (Any): The dependent variable in the model.
+    - x (Any): The independent variable(s) in the model.
+    - observation (np.ndarray): Observed data for y.
+    - N (int): Total number of MCMC iterations.
+    - m (int): Number of parameters in the model.
+    - burn_in (int): Number of initial iterations to discard (burn-in).
+    - n (int): Number of MCMC chains to run. Default is 1.
+    - diagnostic (bool): Whether to perform and save diagnostic plots. Default is True.
+    - algo (str): The MCMC algorithm to use ('MH' for Metropolis-Hastings, etc.). Default is 'MH'.
+    - adapt (bool): Whether to use an adaptive MCMC algorithm. Default is False.
+    - scale (float): Scaling factor for the proposal distribution. Default is 0.3.
+    - parallel (bool): Whether to run MCMC chains in parallel using Ray. Default is False.
+
+    Returns:
+    - estimates (np.ndarray): Mean estimates of the parameters from the MCMC chains.
+    - dict: A dictionary containing summary statistics like the mean, standard deviation, ESS, and R-hat.
     """
 
-    # Create a folder name based on key parameters
+    # Create a folder name based on key parameters for saving outputs
     adapt_str = "adaptive" if adapt else "non_adaptive"
     folder_name = f"MCMC_cuqi_n{n}_algo{algo}_{adapt_str}_scale{scale}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Replace any potential forbidden characters in folder names
     folder_name = folder_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
 
-    # Ensure the folder name is not too long
+    # Ensure the folder name is not too long (max 255 characters for most file systems)
     folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
-
     os.makedirs(folder_name, exist_ok=True)
 
-    estimates = np.empty((1, 0))
-    chains = np.empty((0, 1, N - burn_in))
-    post = np.empty((1, 0))
+    # Initialize arrays for storing results
+    estimates = np.empty((m, 0))
+    chains = np.empty((0, m, N - burn_in))
+    post = np.empty((m, 0))
+    
+    # Create the posterior distribution using CUQI
     posterior = JointDistribution(x, y)(y=observation)
 
+    # Perform MCMC sampling
     if parallel:
+        # Initialize Ray for parallel processing
         logging.getLogger('tensorflow').setLevel(logging.ERROR)
         tf.get_logger().setLevel('ERROR')
         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
-        futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
+        
+        # Execute parallel MCMC chains
+        futures = [
+            chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) 
+            for _ in range(n)
+        ]
         results = ray.get(futures)
         ray.shutdown()
     else:
-        results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
+        # Execute sequential MCMC chains
+        results = [
+            chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) 
+            for _ in range(n)
+        ]
 
+    # Aggregate results from all chains
     for result in results:
         estimates = np.column_stack((estimates, result[0])) 
         chains = np.concatenate((chains, result[1]), axis=0)
         post = np.concatenate((post, result[2]), axis=1)
 
+    # Generate and save trace plots for each parameter
     for l in range(chains.shape[1]):
         plt.figure(figsize=(10, 4))
         for i in range(chains.shape[0]):
@@ -193,10 +260,13 @@ def MCMC_cuqi(
         plt.savefig(os.path.join(folder_name, f"trace_plot_var_{l}.png"))
         plt.close()
 
+    # Perform diagnostic analysis if requested
     if diagnostic:
         num_bins = 20
-        plt.figure()
+
+        # Generate and save distribution plots for each parameter
         for num in range(post.shape[0]):
+            plt.figure()
             bin_edges = np.linspace(np.min(post[num, :]), np.max(post[num, :]), num_bins + 1)
             hist, _ = np.histogram(post[num, :], bins=bin_edges)
             hist = hist / post.shape[1]
@@ -209,20 +279,22 @@ def MCMC_cuqi(
             plt.savefig(os.path.join(folder_name, f"distribution_var_{num+1}.png"))
             plt.close()
 
+        # Calculate diagnostic statistics (ESS, autocovariance, R-hat)
         autocov = az.autocov(chains[:, 0, :])
         ess = az.ess(chains[:, 0, :])
         r_hat = az.rhat(chains[:, 0, :]) if n > 1 else None  # Only compute R-hat if more than one chain
         print(f"ESS values = {ess}")
+        
+        # Generate and save autocovariance plot for the first chain
         plt.figure()
         plt.plot(autocov[0, :])
         plt.title('Autocovariance first chain')
         plt.xlabel('Lag')
         plt.ylabel('Autocovariance')
-        plt.legend()
         plt.savefig(os.path.join(folder_name, "autocovariance_first_chain.png"))
         plt.close()
 
-        # Save the diagnostic statistics in a text file
+        # Save the diagnostic statistics to a text file
         with open(os.path.join(folder_name, "diagnostic_stats.txt"), "w") as f:
             f.write("MCMC Diagnostics:\n")
             f.write(f"Estimated Parameters (mean): {np.mean(estimates, axis=1)}\n")
@@ -232,7 +304,13 @@ def MCMC_cuqi(
                 f.write(f"R-hat: {r_hat}\n")
             f.write("\n")
     
-    return estimates, {'expected_param': np.mean(estimates, axis=1), 'std_dev': np.std(estimates, axis=1), 'ess': ess, 'r_hat': r_hat}
+    # Return the parameter estimates and summary statistics
+    return estimates, {
+        'expected_param': np.mean(estimates, axis=1), 
+        'std_dev': np.std(estimates, axis=1), 
+        'ess': ess, 
+        'r_hat': r_hat
+    }
 # def MCMC_cuqi(
 #     y: Any, 
 #     x: Any, 

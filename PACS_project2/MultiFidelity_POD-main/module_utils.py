@@ -303,6 +303,8 @@ def getModel(params,num_inputs,name,num_outputs):
         output = Dense(num_outputs,activation='linear')(a)
 
 
+
+
     elif (name == "LSTM_support"):
         # inputs = Input(shape=(None, num_inputs))
         # if params["sched"] is True:

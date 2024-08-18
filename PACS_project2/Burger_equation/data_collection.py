@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.utils import extmath
 from typing import Any, Optional
+from numba import njit, prange
 
 class BurgerEquation:
 
@@ -45,6 +46,7 @@ class BurgerEquation:
         self.u_lf_test = np.zeros((self.nre_test, self.nt, self.nh))
 
     @staticmethod
+    @njit(fastmath=True)
     def u_HF(x: float, t: float, re: float) -> np.ndarray:
         """
         High-fidelity model: exact analytical solution.
@@ -61,6 +63,7 @@ class BurgerEquation:
         return x / (t + 1) / (1.0 + np.exp(re * (x**2) / (4 * t + 4)) * ((t + 1) / A0)**0.5)
 
     @staticmethod
+    @njit(fastmath=True)
     def u_LF(x: float, t: float, re: float) -> np.ndarray:
         """
         Low-fidelity model.
@@ -140,105 +143,225 @@ class BurgerEquation:
         """
         return r * (self.re_max - self.re_min) + self.re_min
 
+    # def generate_data(self) -> None:
+    #     """
+    #     Generate training and test data for high-fidelity and low-fidelity models.
+    #     Populates u_hf, u_lf, u_hf_test, u_lf_test attributes.
+    #     """
+    #     for p in range(self.nre_train):
+    #         re_value = self.denormalize(self.re_train[p])
+    #         self.u_hf[p] = np.array([[self.u_HF(self.x[i], self.t[n], re_value) 
+    #                                   for i in range(self.nh)] for n in range(self.nt)])
+    #         self.u_lf[p] = np.array([[self.u_LF(self.x[i], self.t[n], re_value) 
+    #                                   for i in range(self.nh)] for n in range(self.nt)])
+
+    #     for p in range(self.nre_test):
+    #         re_value = self.denormalize(self.re_test[p])
+    #         self.u_hf_test[p] = np.array([[self.u_HF(self.x[i], self.t[n], re_value) 
+    #                                        for i in range(self.nh)] for n in range(self.nt)])
+    #         self.u_lf_test[p] = np.array([[self.u_LF(self.x[i], self.t[n], re_value) 
+    #                                        for i in range(self.nh)] for n in range(self.nt)])
     def generate_data(self) -> None:
         """
         Generate training and test data for high-fidelity and low-fidelity models.
         Populates u_hf, u_lf, u_hf_test, u_lf_test attributes.
         """
-        for p in range(self.nre_train):
-            for n in range(self.nt):
-                for i in range(self.nh):
-                    re_value = self.denormalize(self.re_train[p])
-                    self.u_hf[p, n, i] = self.u_HF(self.x[i], self.t[n], re_value)
-                    self.u_lf[p, n, i] = self.u_LF(self.x[i], self.t[n], re_value)
+        self.u_hf, self.u_lf = self._generate_data_parallel(self.re_train, self.nre_train)
+        
+        self.u_hf_test, self.u_lf_test = self._generate_data_parallel(self.re_test, self.nre_test)
 
-        for p in range(self.nre_test):
-            for n in range(self.nt):
-                for i in range(self.nh):
-                    re_value = self.denormalize(self.re_test[p])
-                    self.u_hf_test[p, n, i] = self.u_HF(self.x[i], self.t[n], re_value)
-                    self.u_lf_test[p, n, i] = self.u_LF(self.x[i], self.t[n], re_value)
-                    
+    @staticmethod
+    @njit(parallel=True, fastmath=True)
+    def _generate_data_parallel(re_set: np.ndarray, nre_set: int) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Internal static method to generate data in parallel.
+        
+        Parameters:
+        - re_set (np.ndarray): Array of normalized Reynolds numbers.
+        - nre_set (int): Number of Reynolds numbers in the set.
+        
+        Returns:
+        - u_hf (np.ndarray): High-fidelity dataset.
+        - u_lf (np.ndarray): Low-fidelity dataset.
+        """
+        nh, nt = 101, 151  # Assuming nh and nt are fixed
+        L, T = 1.0, 2.0    # Spatial and temporal domain lengths
+        re_min, re_max = 80, 500
+        x = np.linspace(0, L, nh)
+        t = np.linspace(0, T, nt)
+
+        u_hf = np.zeros((nre_set, nt, nh))
+        u_lf = np.zeros((nre_set, nt, nh))
+
+        for p in prange(nre_set):
+            re_value = re_set[p] * (re_max - re_min) + re_min
+            A0_hf = np.exp(re_value / 8.0)
+            A0_lf = np.exp(re_value / 8.0)
+
+            for n in range(nt):
+                t_n = t[n]
+                x_sq = x ** 2
+                x_lin = x
+
+                # Vectorized computation for the high-fidelity model
+                u_hf[p, n, :] = x / (t_n + 1) / (1.0 + np.exp(re_value * x_sq / (4 * t_n + 4)) * ((t_n + 1) / A0_hf)**0.5)
+                
+                # Vectorized computation for the low-fidelity model
+                u_lf[p, n, :] = x / (t_n + 1) / (1.0 + np.exp(re_value * x_lin / (4 * t_n + 4)) * ((t_n + 1) / A0_lf)**0.5)
+        
+        return u_hf, u_lf                 
     
+    # def plot_ground_truth_simulations(self) -> None:
+    #     """
+    #     Plot ground truth simulations for both high-fidelity and low-fidelity models.
+    #     """
+    #     times = [0, self.nt // 2, self.nt - 1]
+    #     alphas = [1, 0.5, 0.25]
+    #     plt.figure(figsize=(7, 5))
+    #     for j in range(3):
+    #         plt.subplot(2, 2, 1)
+    #         plt.plot(self.x, self.u_HF(self.x, self.t[times[j]], 100), 
+    #                  label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='steelblue')
+    #         plt.title("High-fidelity $Re$ = 100", fontsize=11)
+    #         plt.xlabel('x')
+    #         plt.legend(loc='upper right')
+
+    #         plt.subplot(2, 2, 2)
+    #         plt.plot(self.x, self.u_HF(self.x, self.t[times[j]], 400), 
+    #                  label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='steelblue')
+    #         plt.title("High-fidelity $Re$ = 400", fontsize=11)
+    #         plt.xlabel('x')
+    #         plt.legend(loc='upper right')
+
+    #         plt.subplot(2, 2, 3)
+    #         plt.plot(self.x, self.u_LF(self.x, self.t[times[j]], 100), 
+    #                  label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='green')
+    #         plt.title("Low-fidelity $Re$ = 100", fontsize=11)
+    #         plt.xlabel('x')
+    #         plt.legend(loc='upper right')
+
+    #         plt.subplot(2, 2, 4)
+    #         plt.plot(self.x, self.u_LF(self.x, self.t[times[j]], 400), 
+    #                  label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='green')
+    #         plt.title("Low-fidelity $Re$ = 400", fontsize=11)
+    #         plt.xlabel('x')
+    #         plt.legend(loc='upper right')
+
+    #     plt.tight_layout()
+    #     plt.show()
     def plot_ground_truth_simulations(self) -> None:
         """
-        Plot ground truth simulations for both high-fidelity and low-fidelity models.
+        Plot ground truth simulations for both high-fidelity and low-fidelity models
+        at different time points and Reynolds numbers.
         """
+        re_values = [100, 400]
         times = [0, self.nt // 2, self.nt - 1]
         alphas = [1, 0.5, 0.25]
+
         plt.figure(figsize=(7, 5))
-        for j in range(3):
-            plt.subplot(2, 2, 1)
-            plt.plot(self.x, self.u_HF(self.x, self.t[times[j]], 100), 
-                     label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='steelblue')
-            plt.title("High-fidelity $Re$ = 100", fontsize=11)
-            plt.xlabel('x')
-            plt.legend(loc='upper right')
 
-            plt.subplot(2, 2, 2)
-            plt.plot(self.x, self.u_HF(self.x, self.t[times[j]], 400), 
-                     label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='steelblue')
-            plt.title("High-fidelity $Re$ = 400", fontsize=11)
-            plt.xlabel('x')
-            plt.legend(loc='upper right')
+        for i, re in enumerate(re_values):
+            for j, time in enumerate(times):
+                hf_data = self.u_HF(self.x, self.t[time], re)
+                lf_data = self.u_LF(self.x, self.t[time], re)
 
-            plt.subplot(2, 2, 3)
-            plt.plot(self.x, self.u_LF(self.x, self.t[times[j]], 100), 
-                     label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='green')
-            plt.title("Low-fidelity $Re$ = 100", fontsize=11)
-            plt.xlabel('x')
-            plt.legend(loc='upper right')
+                # Plot High-fidelity
+                plt.subplot(2, 2, 1 + i * 2)
+                plt.plot(self.x, hf_data, label=f"$t$ = {self.t[time]:.2f}", alpha=alphas[j], color='steelblue')
+                plt.title(f"High-fidelity $Re$ = {re}", fontsize=11)
+                plt.xlabel('x')
+                plt.legend(loc='upper right')
 
-            plt.subplot(2, 2, 4)
-            plt.plot(self.x, self.u_LF(self.x, self.t[times[j]], 400), 
-                     label=f"$t$ = {self.t[times[j]]:.2f}", alpha=alphas[j], color='green')
-            plt.title("Low-fidelity $Re$ = 400", fontsize=11)
-            plt.xlabel('x')
-            plt.legend(loc='upper right')
+                # Plot Low-fidelity
+                plt.subplot(2, 2, 3 + i * 2)
+                plt.plot(self.x, lf_data, label=f"$t$ = {self.t[time]:.2f}", alpha=alphas[j], color='green')
+                plt.title(f"Low-fidelity $Re$ = {re}", fontsize=11)
+                plt.xlabel('x')
+                plt.legend(loc='upper right')
 
         plt.tight_layout()
         plt.show()
 
 
-    def plot_single_contour(self, ax, t_grid: np.ndarray, x_grid: np.ndarray, data: np.ndarray, title: str, xlabel: str, ylabel: str, cmap: str = 'plasma', levels: int = 10, colorbar_label: str = 'u'):
+    def plot_single_contour(self, ax: Any, t_grid: np.ndarray, x_grid: np.ndarray, data: np.ndarray, 
+                            title: str, xlabel: str, ylabel: str, cmap: str = 'plasma', levels: int = 10, 
+                            colorbar_label: str = 'u') -> None:
         """
         Plot a single contour plot.
 
         Parameters:
-        - ax (Axes): Matplotlib axes object to plot on.
+        - ax (Any): Matplotlib axes object to plot on.
         - t_grid (np.ndarray): Grid for the t-axis.
+        Shape: (nt, nh)
         - x_grid (np.ndarray): Grid for the x-axis.
+        Shape: (nt, nh)
         - data (np.ndarray): Data to plot.
+        Shape: (nt, nh)
         - title (str): Title of the plot.
         - xlabel (str): Label for the x-axis.
         - ylabel (str): Label for the y-axis.
         - cmap (str): Colormap to use.
-        - levels (int or array-like): Levels for contour plot.
+        - levels (int): Levels for contour plot.
         - colorbar_label (str): Label for the colorbar.
+
+        Returns:
+        - None
         """
-        # Plot the contour
         surf = ax.contourf(t_grid, x_grid, data.T, cmap=cmap, levels=levels)
-        
-        # Set axis labels
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12, labelpad=15, rotation=0)
-        
-        # Add colorbar
         cbar = plt.colorbar(surf, ax=ax)
         cbar.ax.set_ylabel(colorbar_label, fontsize=12, labelpad=15, rotation=0)
-        
-        # Set title
         ax.set_title(title, fontsize=14)
 
+    # def plot_data(self):
+    #     """
+    #     Plot the generated data for both high-fidelity and low-fidelity models.
+    #     """
+    #     # Sort the Re values and get the sorted indices
+    #     sorted_indices = np.argsort(self.re_train)
 
-    def plot_data(self):
+    #     # Reorder the Re values and corresponding u_lf, u_hf based on the sorted indices
+    #     sorted_re_train = self.re_train[sorted_indices]
+    #     sorted_u_lf = self.u_lf[sorted_indices]
+    #     sorted_u_hf = self.u_hf[sorted_indices]
+
+    #     abs_lf = np.abs(sorted_u_lf)
+    #     abs_hf = np.abs(sorted_u_hf)
+    #     max_abs = max(abs_lf.max(), abs_hf.max())
+    #     levels = np.linspace(0, max_abs, 11)
+
+    #     # Number of plots per figure (3 pairs of LF-HF plots)
+    #     plots_per_figure = 3
+
+    #     for i in range(0, self.nre_train, plots_per_figure):
+    #         # Determine how many pairs to plot in this figure
+    #         num_plots = min(plots_per_figure, self.nre_train - i)
+            
+    #         fig, axes = plt.subplots(nrows=num_plots, ncols=2, figsize=(12, 3 * num_plots))
+            
+    #         # Ensure axes is always a 2D array
+    #         if num_plots == 1:
+    #             axes = np.expand_dims(axes, axis=0)
+            
+    #         for j in range(num_plots):
+    #             ind_re = i + j
+    #             t_grid, x_grid = np.meshgrid(self.t, self.x)
+                
+    #             lf_title = f'Low-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
+    #             self.plot_single_contour(axes[j, 0], t_grid, x_grid, sorted_u_lf[ind_re], lf_title, 't', 'x', levels=levels)
+
+    #             hf_title = f'High-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
+    #             self.plot_single_contour(axes[j, 1], t_grid, x_grid, sorted_u_hf[ind_re], hf_title, 't', 'x', levels=levels)
+            
+    #         plt.tight_layout()
+    #         plt.show()
+
+    def plot_data(self) -> None:
         """
         Plot the generated data for both high-fidelity and low-fidelity models.
         """
-        # Sort the Re values and get the sorted indices
         sorted_indices = np.argsort(self.re_train)
-
-        # Reorder the Re values and corresponding u_lf, u_hf based on the sorted indices
         sorted_re_train = self.re_train[sorted_indices]
         sorted_u_lf = self.u_lf[sorted_indices]
         sorted_u_hf = self.u_hf[sorted_indices]
@@ -247,46 +370,78 @@ class BurgerEquation:
         abs_hf = np.abs(sorted_u_hf)
         max_abs = max(abs_lf.max(), abs_hf.max())
         levels = np.linspace(0, max_abs, 11)
-
-        # Number of plots per figure (3 pairs of LF-HF plots)
         plots_per_figure = 3
 
         for i in range(0, self.nre_train, plots_per_figure):
-            # Determine how many pairs to plot in this figure
             num_plots = min(plots_per_figure, self.nre_train - i)
-            
             fig, axes = plt.subplots(nrows=num_plots, ncols=2, figsize=(12, 3 * num_plots))
-            
-            # Ensure axes is always a 2D array
+
             if num_plots == 1:
                 axes = np.expand_dims(axes, axis=0)
-            
+
             for j in range(num_plots):
                 ind_re = i + j
                 t_grid, x_grid = np.meshgrid(self.t, self.x)
-                
-                lf_title = f'Low-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
-                self.plot_single_contour(axes[j, 0], t_grid, x_grid, sorted_u_lf[ind_re], lf_title, 't', 'x', levels=levels)
 
+                lf_title = f'Low-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
                 hf_title = f'High-fidelity $Re = ${int(self.denormalize(sorted_re_train[ind_re]))}'
+
+                self.plot_single_contour(axes[j, 0], t_grid, x_grid, sorted_u_lf[ind_re], lf_title, 't', 'x', levels=levels)
                 self.plot_single_contour(axes[j, 1], t_grid, x_grid, sorted_u_hf[ind_re], hf_title, 't', 'x', levels=levels)
-            
+
             plt.tight_layout()
             plt.show()
+        
+    # def plot_comparison(self, output_pred, basis, ind_test):
+    #     """
+    #     Plot comparison of low-fidelity, high-fidelity, and predicted data.
+    #     """
+    #     # Reconstruct u_pred and handle NaNs or infinite values
+    #     u_pred = output_pred @ basis.T
+    #     u_pred = np.nan_to_num(u_pred, nan=0.0, posinf=0.0, neginf=0.0)
 
-    
-    def plot_comparison(self, output_pred, basis, ind_test):
+    #     t_grid, x_grid = np.meshgrid(self.t, self.x)
+
+    #     abs_lf = np.abs(self.u_lf_test)
+    #     abs_hf= np.abs(self.u_hf_test)
+    #     max_abs = max(abs_lf.max(), abs_hf.max())
+    #     levels = np.linspace(0, max_abs, 11)
+
+    #     for ind_re in ind_test:
+    #         fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(6, 7.5))
+    #         re_value = int(self.denormalize(self.re_test[ind_re]))
+    #         plt.suptitle(f'Re = {re_value}', fontsize=14)
+            
+    #         lf_title = 'Low-fidelity'
+    #         self.plot_single_contour(axes[0], t_grid, x_grid, self.u_lf_test[ind_re], lf_title, 't', 'x', levels=levels, colorbar_label='$u_{LF}$')
+            
+    #         hf_title = 'High-fidelity'
+    #         self.plot_single_contour(axes[1], t_grid, x_grid, self.u_hf_test[ind_re], hf_title, 't', 'x', levels=levels, colorbar_label='$u_{HF}$')
+            
+    #         # Clip u_pred to avoid exceeding contour levels
+    #         u_pred_clipped = np.clip(u_pred[ind_re], levels.min(), levels.max())
+    #         pred_title = 'MF-POD prediction'
+    #         self.plot_single_contour(axes[2], t_grid, x_grid, u_pred_clipped, pred_title, 't', 'x', levels=levels, colorbar_label='$u_{POD}$')
+            
+    #         plt.tight_layout()
+    #         plt.show()
+    def plot_comparison(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray) -> None:
         """
         Plot comparison of low-fidelity, high-fidelity, and predicted data.
-        """
-        # Reconstruct u_pred and handle NaNs or infinite values
-        u_pred = output_pred @ basis.T
-        u_pred = np.nan_to_num(u_pred, nan=0.0, posinf=0.0, neginf=0.0)
 
+        Parameters:
+        - output_pred (np.ndarray): Predicted output from the model.
+        Shape: (n_test, n_POD)
+        - basis (np.ndarray): POD basis matrix.
+        Shape: (n_POD, nh)
+        - ind_test (np.ndarray): Indices of the test cases to plot.
+        Shape: (n_test,)
+        """
+        u_pred = np.nan_to_num(output_pred @ basis.T, nan=0.0, posinf=0.0, neginf=0.0)
         t_grid, x_grid = np.meshgrid(self.t, self.x)
 
         abs_lf = np.abs(self.u_lf_test)
-        abs_hf= np.abs(self.u_hf_test)
+        abs_hf = np.abs(self.u_hf_test)
         max_abs = max(abs_lf.max(), abs_hf.max())
         levels = np.linspace(0, max_abs, 11)
 
@@ -294,53 +449,87 @@ class BurgerEquation:
             fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(6, 7.5))
             re_value = int(self.denormalize(self.re_test[ind_re]))
             plt.suptitle(f'Re = {re_value}', fontsize=14)
-            
+
             lf_title = 'Low-fidelity'
-            self.plot_single_contour(axes[0], t_grid, x_grid, self.u_lf_test[ind_re], lf_title, 't', 'x', levels=levels, colorbar_label='$u_{LF}$')
-            
             hf_title = 'High-fidelity'
+            pred_title = 'MF-POD prediction'
+
+            self.plot_single_contour(axes[0], t_grid, x_grid, self.u_lf_test[ind_re], lf_title, 't', 'x', levels=levels, colorbar_label='$u_{LF}$')
             self.plot_single_contour(axes[1], t_grid, x_grid, self.u_hf_test[ind_re], hf_title, 't', 'x', levels=levels, colorbar_label='$u_{HF}$')
             
-            # Clip u_pred to avoid exceeding contour levels
             u_pred_clipped = np.clip(u_pred[ind_re], levels.min(), levels.max())
-            pred_title = 'MF-POD prediction'
             self.plot_single_contour(axes[2], t_grid, x_grid, u_pred_clipped, pred_title, 't', 'x', levels=levels, colorbar_label='$u_{POD}$')
-            
+
             plt.tight_layout()
             plt.show()
 
+    # def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray):
+    #     """
+    #     Plot the relative and absolute errors for low-fidelity (LF) and multi-fidelity POD (MF-POD) predictions.
 
-    def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray):
+    #     Parameters:
+    #     - output_pred (np.ndarray): Predicted output from the model.
+    #     - basis (np.ndarray): Basis matrix used for POD.
+    #     - ind_test (np.ndarray): Indices of the test cases to plot.
+    #     """
+    #     # Project the predicted output onto the high-fidelity space
+    #     u_pred = output_pred @ basis.T
+        
+    #     # Calculate relative errors
+    #     rel_err_lf = np.linalg.norm(self.u_lf_test - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
+    #     rel_err_pred = np.linalg.norm(u_pred - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
+
+    #     # Calculate absolute errors
+    #     abs_err_lf = np.abs(self.u_lf_test - self.u_hf_test)
+    #     abs_err_pred = np.abs(u_pred - self.u_hf_test)
+        
+    #     # Determine the maximum absolute error for consistent color mapping
+    #     max_abs_err = max(abs_err_lf.max(), abs_err_pred.max())
+    #     levels = np.linspace(0, max_abs_err, 11)
+        
+    #     # Generate meshgrid for plotting
+    #     t_grid, x_grid = np.meshgrid(self.t, self.x)
+
+    #     for ind_re in ind_test:
+    #         fig = plt.figure(figsize=(6, 5))
+    #         plt.suptitle(f'Re = {int(self.denormalize(self.re_test[ind_re]))}', fontsize=14)
+            
+    #         ax = fig.add_subplot(211)
+    #         self.plot_single_contour(ax, t_grid, x_grid, abs_err_lf[ind_re], 'Absolute error for LF', 't', 'x', cmap='bwr', levels=levels, colorbar_label='Err.')
+
+    #         ax = fig.add_subplot(212)
+    #         self.plot_single_contour(ax, t_grid, x_grid, abs_err_pred[ind_re], 'Absolute error for MF-POD', 't', 'x', cmap='bwr', levels=levels, colorbar_label='Err.')
+
+    #         plt.tight_layout()
+    #         plt.show()
+    def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray) -> None:
         """
         Plot the relative and absolute errors for low-fidelity (LF) and multi-fidelity POD (MF-POD) predictions.
 
         Parameters:
         - output_pred (np.ndarray): Predicted output from the model.
+        Shape: (n_test, n_POD)
         - basis (np.ndarray): Basis matrix used for POD.
+        Shape: (n_POD, nh)
         - ind_test (np.ndarray): Indices of the test cases to plot.
+        Shape: (n_test,)
         """
-        # Project the predicted output onto the high-fidelity space
         u_pred = output_pred @ basis.T
-        
-        # Calculate relative errors
+
         rel_err_lf = np.linalg.norm(self.u_lf_test - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
         rel_err_pred = np.linalg.norm(u_pred - self.u_hf_test) / np.linalg.norm(self.u_hf_test)
 
-        # Calculate absolute errors
         abs_err_lf = np.abs(self.u_lf_test - self.u_hf_test)
         abs_err_pred = np.abs(u_pred - self.u_hf_test)
-        
-        # Determine the maximum absolute error for consistent color mapping
         max_abs_err = max(abs_err_lf.max(), abs_err_pred.max())
         levels = np.linspace(0, max_abs_err, 11)
-        
-        # Generate meshgrid for plotting
+
         t_grid, x_grid = np.meshgrid(self.t, self.x)
 
         for ind_re in ind_test:
             fig = plt.figure(figsize=(6, 5))
             plt.suptitle(f'Re = {int(self.denormalize(self.re_test[ind_re]))}', fontsize=14)
-            
+
             ax = fig.add_subplot(211)
             self.plot_single_contour(ax, t_grid, x_grid, abs_err_lf[ind_re], 'Absolute error for LF', 't', 'x', cmap='bwr', levels=levels, colorbar_label='Err.')
 
@@ -350,21 +539,55 @@ class BurgerEquation:
             plt.tight_layout()
             plt.show()
        
+    # def plot_(self, re: float) -> None:
+    #     """
+    #     Plot both low-fidelity and high-fidelity outputs for a given Reynolds number.
+
+    #     Parameters:
+    #     - re (float): normalized Reynolds number
+    #     """
+    #     re_value = self.denormalize(re)
+
+    #     # Generate LF and HF data
+    #     u_hf = np.array([[self.u_HF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
+    #     u_lf = np.array([[self.u_LF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
+
+    #     # Create the plots
+    #     t_grid, x_grid = np.meshgrid(self.t, self.x)
+    #     fig = plt.figure(figsize=(6, 5))
+
+    #     ax = fig.add_subplot(211)
+    #     surf = ax.contourf(t_grid, x_grid, u_lf.T, cmap='plasma', levels=10)
+    #     plt.xlabel('t', fontsize=12)
+    #     plt.ylabel('x', fontsize=12, labelpad=15, rotation=0)
+    #     cbar = fig.colorbar(surf, ax=ax)
+    #     cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
+    #     plt.title(f'Low-fidelity $Re = ${re_value:.2f}', fontsize=14)
+
+    #     ax = fig.add_subplot(212)
+    #     surf = ax.contourf(t_grid, x_grid, u_hf.T, cmap='plasma', levels=10)
+    #     plt.xlabel('t', fontsize=12)
+    #     plt.ylabel('x', fontsize=12, labelpad=15, rotation=0)
+    #     cbar = fig.colorbar(surf, ax=ax)
+    #     cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
+    #     plt.title(f'High-fidelity $Re = ${re_value:.2f}', fontsize=14)
+
+    #     plt.tight_layout()
+    #     plt.show()
+        
     def plot_(self, re: float) -> None:
         """
         Plot both low-fidelity and high-fidelity outputs for a given Reynolds number.
 
         Parameters:
-        - re (float): normalized Reynolds number
+        - re (float): Normalized Reynolds number.
         """
         re_value = self.denormalize(re)
+        t_grid, x_grid = np.meshgrid(self.t, self.x)
 
-        # Generate LF and HF data
         u_hf = np.array([[self.u_HF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
         u_lf = np.array([[self.u_LF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
 
-        # Create the plots
-        t_grid, x_grid = np.meshgrid(self.t, self.x)
         fig = plt.figure(figsize=(6, 5))
 
         ax = fig.add_subplot(211)
@@ -384,9 +607,7 @@ class BurgerEquation:
         plt.title(f'High-fidelity $Re = ${re_value:.2f}', fontsize=14)
 
         plt.tight_layout()
-        plt.show()
-        
-        
+        plt.show()     
         
 
 class ROM:
@@ -396,35 +617,20 @@ class ROM:
         Initialize the Reduced Order Model (ROM) class.
 
         Parameters:
-        - burger_eq: An instance of the Burger equation solver or model.
-        - n_POD: The number of Proper Orthogonal Decomposition (POD) modes to retain.
+        - burger_eq (Any): An instance of the Burger equation solver or model.
+        - n_POD (int): The number of Proper Orthogonal Decomposition (POD) modes to retain.
         """
-        
-        # Assign the provided burger_eq instance to the class attribute
         self.burger_eq = burger_eq
-        
-        # Assign the number of POD modes to retain to the class attribute
         self.n_POD = n_POD
         
-        # Placeholder for the basis vectors obtained from POD
         self.basis: Optional[np.ndarray] = None
-        
-        # Placeholder for the singular values obtained from POD
         self.S: Optional[np.ndarray] = None
-        
-        # Placeholder for the low-fidelity POD coefficients for the training data
         self.u_lf_pod: Optional[np.ndarray] = None
-        
-        # Placeholder for the high-fidelity POD coefficients for the training data
         self.u_hf_pod: Optional[np.ndarray] = None
-        
-        # Placeholder for the low-fidelity POD coefficients for the test data
         self.u_lf_pod_test: Optional[np.ndarray] = None
-        
-        # Placeholder for the high-fidelity POD coefficients for the test data
         self.u_hf_pod_test: Optional[np.ndarray] = None
 
-    def compute_randomized_SVD(self, S: np.ndarray, N_POD: int, N_h: int, n_channels: int) -> tuple[np.ndarray, np.ndarray]:
+    def compute_randomized_SVD(self, S: np.ndarray, N_POD: int, N_h: int, n_channels: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the randomized Singular Value Decomposition (SVD) for the input matrix S.
 
@@ -435,12 +641,12 @@ class ROM:
         - n_channels (int): The number of channels.
 
         Returns:
-        - tuple[np.ndarray, np.ndarray]: A tuple containing the left singular vectors (U) and the singular values (Sigma).
+        - Tuple[np.ndarray, np.ndarray]: A tuple containing the left singular vectors (U) and the singular values (Sigma).
           - U (np.ndarray): The matrix of left singular vectors of shape (n_channels * N_h, N_POD).
           - Sigma (np.ndarray): The array of singular values.
         """
         U = np.zeros((n_channels * N_h, N_POD))
-        Sigma = np.zeros((n_channels, N_POD))  # Initializing Sigma to store singular values for each channel
+        Sigma = np.zeros((n_channels, N_POD))  # Store singular values for each channel
 
         for i in range(n_channels):
             start_idx = i * N_h
@@ -456,37 +662,36 @@ class ROM:
 
         return U, Sigma
 
-    def get_basis(self) -> np.ndarray:
+    def get_basis(self) -> Optional[np.ndarray]:
         """
         Retrieve the POD basis.
         
         Returns:
-        - basis (np.ndarray): The POD basis.
+        - Optional[np.ndarray]: The POD basis or None if not yet computed.
         """
         return self.basis
 
-    def perform_POD(self) -> None:
+    def perform_POD(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Perform Proper Orthogonal Decomposition (POD) on high-fidelity (HF) and low-fidelity (LF) data.
         
-        This method reshapes the high-fidelity and low-fidelity data into a suitable format, computes the POD basis 
-        using randomized SVD on the high-fidelity data, and then projects both the high-fidelity and low-fidelity 
-        training and test data onto the computed POD basis. The projected data is reshaped to be suitable for 
-        subsequent use in machine learning models such as LSTM networks.
-        
-        Steps:
-        1. Reshape the HF and LF data into 2D arrays where each row corresponds to a time snapshot and each column to a spatial grid point.
-        2. Compute the POD basis using the reshaped HF data.
-        3. Project the reshaped HF and LF data onto the POD basis to obtain the POD coefficients.
-        4. Reshape the POD coefficients to the original 3D format for use in machine learning models.
+        Reshapes the data, computes the POD basis using randomized SVD on HF data, and projects both HF and LF 
+        data onto the computed POD basis. The data is then reshaped for LSTM training.
+
+        Returns:
+        - Tuple containing input and output data for both training and testing:
+          - input_train (np.ndarray): Input data for training.
+          - output_train (np.ndarray): Output data for training.
+          - input_test (np.ndarray): Input data for testing.
+          - output_test (np.ndarray): Output data for testing.
         """
-        # Reshape for POD
+        # Reshape data for POD
         self.u_hf_pod = np.reshape(self.burger_eq.u_hf, (self.burger_eq.nre * self.burger_eq.nt, self.burger_eq.nh))
         self.u_lf_pod = np.reshape(self.burger_eq.u_lf, (self.burger_eq.nre * self.burger_eq.nt, self.burger_eq.nh))
         self.u_lf_pod_test = np.reshape(self.burger_eq.u_lf_test, (self.burger_eq.nre_test * self.burger_eq.nt, self.burger_eq.nh))
         self.u_hf_pod_test = np.reshape(self.burger_eq.u_hf_test, (self.burger_eq.nre_test * self.burger_eq.nt, self.burger_eq.nh))
 
-        # Compute randomized SVD
+        # Compute randomized SVD for POD basis
         self.basis, self.S = self.compute_randomized_SVD(self.u_hf_pod, self.n_POD, self.burger_eq.nh, 1)
 
         # Project data onto POD basis
@@ -501,14 +706,14 @@ class ROM:
         self.ulf_test = np.reshape(self.ulf_test, (self.burger_eq.nre_test, self.burger_eq.nt, self.n_POD))
         self.uhf_test = np.reshape(self.uhf_test, (self.burger_eq.nre_test, self.burger_eq.nt, self.n_POD))
 
-
+        # Prepare LSTM inputs
         self.t_grid_lstm, self.re_grid_lstm = np.meshgrid(self.burger_eq.t, self.burger_eq.re)
-        self.input_train = np.concatenate((self.t_grid_lstm[:,:,_], self.re_grid_lstm[:,:,_], self.ulf_train), axis = 2)
+        self.input_train = np.concatenate((self.t_grid_lstm[..., _], self.re_grid_lstm[..., _], self.ulf_train), axis=2)
         self.output_train = self.uhf_train
 
-        #Test
+        # Prepare LSTM test inputs
         self.t_grid_lstm_test, self.re_grid_lstm_test = np.meshgrid(self.burger_eq.t, self.burger_eq.re_test)
-        self.input_test = np.concatenate((self.t_grid_lstm_test[:,:,_], self.re_grid_lstm_test[:,:,_], self.ulf_test), axis = 2)
+        self.input_test = np.concatenate((self.t_grid_lstm_test[..., _], self.re_grid_lstm_test[..., _], self.ulf_test), axis=2)
         self.output_test = self.uhf_test 
         
         return self.input_train, self.output_train, self.input_test, self.output_test
@@ -529,7 +734,7 @@ class ROM:
             ax = fig.add_subplot(231 + mode)
             ax.plot(t, self.ulf_train[ind_re, :, mode], label='LF', linewidth=2, color='green', linestyle='--')
             ax.plot(t, self.uhf_train[ind_re, :, mode], label='HF', linewidth=2, color='blue')
-            ax.set_title('POD coord. ' + str(mode + 1))
+            ax.set_title(f'POD coord. {mode + 1}')
             ax.set_xlabel('t')
             ax.legend()
         plt.show()
@@ -554,18 +759,17 @@ class ROM:
 
         fig = plt.figure(figsize=(12, 6))
         plt.subplots_adjust(hspace=0.5)
-        fig.suptitle('POD coefficients: LF vs HF', fontsize=14)
+        fig.suptitle('POD coefficients: Predicted vs Test', fontsize=14)
         t = self.burger_eq.t
 
         for mode in range(min(6, self.n_POD)):
             ax = fig.add_subplot(231 + mode)
-            ax.plot(t, self.output_test[ind_re, :, mode].reshape(-1), 'b-', label='LF', linewidth=2)
-            ax.plot(t, output_pred[ind_re, :, mode].reshape(-1), 'r--', label='HF', linewidth=2)
-            ax.set_title('POD coord. ' + str(mode + 1))
+            ax.plot(t, self.output_test[ind_re, :, mode].reshape(-1), 'b-', label='Test', linewidth=2)
+            ax.plot(t, output_pred[ind_re, :, mode].reshape(-1), 'r--', label='Predicted', linewidth=2)
+            ax.set_title(f'POD coord. {mode + 1}')
             ax.set_xlabel('t')
             ax.legend()
         plt.show()
-
 
 
 

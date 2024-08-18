@@ -26,7 +26,7 @@ import arviz as az
 import time 
 
 from itertools import product
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 # import numpy as np
 # from joblib import Parallel, delayed, Memory
@@ -293,8 +293,9 @@ def run_simulation(
     iterations: int, 
     burnin: int, 
     n_chains: int, 
-    final_model, 
+    final_model,
     algo: str, 
+    subsampling_rate: Union[int, List[int]] = 1,
     levels:int=1,
     force_sequential:bool=False
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -317,6 +318,7 @@ def run_simulation(
     - burnin: Integer for the burn-in period.
     - n_chains: Integer for the number of chains.
     - final_model: The model object with the param_inverse method.
+    - subsampling_rate (Union[int, List[int]]): Rate or rates of subsampling the posterior. Default is 1.
     - algo: String indicating the algorithm to use.
     - levels: number of levels to implement a ML MCMC approach. Valid only for Multifidelity networks to exploit different accuracy discretization levels
     - force_sequential: if True impose a sequential approach to the MCMC algorithm
@@ -344,7 +346,7 @@ def run_simulation(
             cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
             x_real=parameters, number_chains=n_chains, N=iterations, 
             burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential
+            rwmh_adaptive=rwmh_adaptive, subsampling_rate=subsampling_rate, algo=algo, force_sequential=force_sequential
         )
         estimates.append(est)
         error.append(err)

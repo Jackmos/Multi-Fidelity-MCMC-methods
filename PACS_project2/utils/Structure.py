@@ -92,6 +92,7 @@ class NetworkType(Enum):
     INTER = "Inter"
     LSTM = "LSTM"
     LSTM_SUPPORT="LSTM_support"
+    LSTM_SUPPORT2="LSTM_support2"
     STEP = "step"
 
 
@@ -170,7 +171,7 @@ class NetworkFactory:
             return Intermediate(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, n=n, train=train, do_HPO=do_HPO, device=device)
         
         # Cases for LSTM-based networks, including regular LSTM and support LSTM types.
-        elif network_type_enum == NetworkType.LSTM or network_type_enum == NetworkType.LSTM_SUPPORT:
+        elif network_type_enum == NetworkType.LSTM or network_type_enum == NetworkType.LSTM_SUPPORT  or network_type_enum == NetworkType.LSTM_SUPPORT2:
             # Build and return an LSTM network.
             return LSTM_network(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
 
@@ -369,7 +370,8 @@ class INetwork(ABC):
                     diagnostic: bool = True, 
                     rwmh_cov: Optional[np.ndarray] = None, 
                     rmwh_scaling: float = 0.1, 
-                    rwmh_adaptive: bool = True, 
+                    rwmh_adaptive: bool = True,
+                    subsampling_rate: Union[int, List[int]] = 1,
                     algo: str = "MH",
                     force_sequential: bool = False,
                     transformation: List[Any] = []) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
@@ -393,6 +395,7 @@ class INetwork(ABC):
         - rwmh_cov (Optional[np.ndarray]): Covariance matrix for the RWMH proposal distribution.
         - rmwh_scaling (float): Scaling factor for the RWMH proposal.
         - rwmh_adaptive (bool): Flag for enabling adaptive RWMH proposals.
+        - subsampling_rate (Union[int, List[int]]): Rate or rates of subsampling the posterior. Default is 1.
         - algo (str): Algorithm to use for MCMC sampling ('MH', 'AM', 'CN', 'DREAMZ').
         - force_sequential (bool): Flag to enforce sequential processing of the MCMC algorithm.
         - transformation (List[Any]): List of transformations to apply to the input data.
@@ -465,12 +468,12 @@ class INetwork(ABC):
         else:
             # Single-level case: set up likelihood and posterior.
             my_loglike = tda.GaussianLogLike(y_obs, cov_likelihood)
-            my_posterior = tda.Posterior(my_prior, my_loglike, self._wrapper_prediction)
+            my_posterior = [tda.Posterior(my_prior, my_loglike, self._wrapper_prediction)]
 
-        # Ensure all models' inputs are set when multiple levels are used.
-        if levels > 1: 
-            for i in range(levels):
-                self.model_list[i].inputs = x_data
+        # # Ensure all models' inputs are set when multiple levels are used.
+        # if levels > 1: 
+        #     for i in range(levels):
+        #         self.model_list[i].inputs = x_data
 
         # Default to the identity matrix for the RWMH proposal covariance if none is provided.
         if rwmh_cov is None:
@@ -487,6 +490,7 @@ class INetwork(ABC):
             rmwh_scaling=rmwh_scaling, 
             rwmh_adaptive=rwmh_adaptive, 
             algo=algo, 
+            subsampling_rate=subsampling_rate,
             force_sequential=force_sequential,
             dim=dim
         )
@@ -584,6 +588,13 @@ class INetwork(ABC):
             plot_hist(estimates, x_real, self._wrapper_prediction(estimates), self._wrapper_prediction(x_real),max_par)
 
         return estimates, error,parameters
+    
+    @staticmethod
+    def summary(self) -> None:
+        """
+        Prints the summary of the model architecture.
+        """
+        self.model.summary()
 
     @staticmethod
     def save(self, file_path: str) -> None: 
@@ -689,7 +700,7 @@ class Neural_Network(INetwork):
         self._output_train = output_train
         self.transformations = transformations if transformations is not None else []
         self.inputs = None
-        self.level = 0
+        self.level = 0                  # attribute used for MLDA in Bayesian inverse problems
 
         # Set input and output shapes based on training data dimensions
         self.input_shape = self._get_shape(data_train)
@@ -720,11 +731,6 @@ class Neural_Network(INetwork):
             # Plot training loss after training is complete
             self.plot_training_loss()
 
-    def summary(self) -> None:
-        """
-        Prints the summary of the model architecture.
-        """
-        self.model.summary()
 
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
         """
@@ -873,7 +879,7 @@ class Neural_Network(INetwork):
         
         return test_mse, r2
 
-    def _set_level(self, x_data: np.ndarray, prev_steps: List, level: int = 1) -> None:             # -------------------------usata dvoe?----------------------
+    def _set_level(self, x_data: np.ndarray, prev_steps: List, level: int = 1) -> None:             # -------------------------usata in MLDA----------------------
         """
         Sets the level of the model and stores the input data and previous steps. Usefull in a multifidelity scenario
 
@@ -901,7 +907,7 @@ class Neural_Network(INetwork):
 
         if self.level > 1:
             for l in range(0, self.level - 1):
-                x_final = np.concatenate((x_final, self.prev_steps[l]._wrapper_prediction(x_final, multi_input)), axis=1)
+                x_final = np.hstack((x_final, self.prev_steps[l].prediction(concatenate_inputs(self.inputs, x_final))))
         
         return x_final
     
@@ -1102,7 +1108,8 @@ class MultiFidelity(INetwork):
         print(f"R^2: {r2}")
 
         return test_mse, r2
-
+    
+    @staticmethod
     def summary(self) -> None:
         for Model in self.model_list:
             Model.summary()
@@ -1295,23 +1302,30 @@ class LSTM_network(INetwork):
 
 
         # Perform hyperparameter optimization if required       
-        if self._params is None and train:
-                warnings.warn("Not enough data given!", UserWarning)
-            
+ 
         if do_HPO:
-            self._params = self.HPO(data_train, output_train,device=device)
-        # if do_HPO or params is None:
-        #     if output_train is None or data_train is None:
-        #         warnings.warn("Not enough data given!", UserWarning)
-        #     self.params = self.HPO(data_train, output_train,device=device)
+            if output_train is None or data_train is None:
+                warning_message = "Not enough data given!"
+                warnings.warn(warning_message, UserWarning)
+            self._params = self.HPO(data_train, output_train, device=device)
+            print("New parameters identified during HPO:")
+            pprint(self._params)
+
+
+        if self._params is None and train:
+            warnings.warn("Params field is empty!", UserWarning)
         
         # Initialize the model
-        if self._params is not None:
-            self.model = getModel(self._params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
+        self.model = getModel(self._params,self.input_shape,self.name,self.output_shape)  # dim_input = n_POD + 2, dim_output = n_POD
 
-            # Train the model if required
-            if train: 
-                self.hist = self.training(int(self._params['sequence_length']),int(self._params['sequence_freq']),epoch=self._N,device=device) 
+        if train and output_train is not None:
+   
+                self.hist = self.training(
+                    int(self._params['sequence_length']),
+                    int(self._params['sequence_freq']),
+                    epoch=self._N,
+                    device=device
+                    ) 
                 self.plot_training_loss()
 
         else: 
