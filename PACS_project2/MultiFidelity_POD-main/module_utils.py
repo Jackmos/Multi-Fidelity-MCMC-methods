@@ -31,6 +31,7 @@ import tinyDA as tda
 from scipy.stats import multivariate_normal,beta
 import arviz as az
 import time 
+from bayes_opt import BayesianOptimization
 
 
     
@@ -537,6 +538,208 @@ def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
     - cov_likelihood (np.ndarray): 2D array representing the covariance matrix.
     """
     return sigma ** 2 * np.eye(t_eval.shape[0])
+
+
+def HPO_tinyDA(
+    datahf: np.ndarray, 
+    mean_prior: np.ndarray,
+    fwd_LSTM_folder: str,
+    cov_prior: np.ndarray, 
+    Yhf: np.ndarray, 
+    parameters: np.ndarray, 
+    rwmh_cov: np.ndarray, 
+    rwmh_adaptive: bool, 
+    iterations: int, 
+    burnin: int, 
+    n_chains: int, 
+    final_model,  # The model class instance with a method 'param_inverse'
+    algo: str, 
+    levels: int, 
+    force_sequential: bool,
+    sigma_noise_bounds: Tuple[float, float],  # Bounds for sigma_noise as a tuple (min, max)
+    n_data_bounds: Tuple[int, int],           # Bounds for n_data as a tuple (min, max)
+    sigma_bounds: Tuple[float, float],        # Bounds for sigma as a tuple (min, max)
+    rwmh_scaling_bounds: Tuple[float, float],  # Bounds for rwmh_scaling as a tuple (min, max)
+    forward_low_fidelity: Optional[Callable] = None
+) -> Tuple[float, int, float, float]:
+    """
+    Perform hyperparameter optimization using Bayesian Optimization to minimize the error
+    in the param_inverse method of the given final_model.
+
+    Args:
+        datahf (np.ndarray): High-fidelity data array.
+        mean_prior (np.ndarray): Prior mean vector.
+        cov_prior (np.ndarray): Prior covariance matrix.
+        Yhf (np.ndarray): High-fidelity observations.
+        parameters (np.ndarray): Real parameter values for comparison.
+        rwmh_cov (np.ndarray): Covariance matrix for the RWMH proposal distribution.
+        rwmh_adaptive (bool): Flag to enable adaptive RWMH.
+        iterations (int): Number of iterations for the RWMH algorithm.
+        burnin (int): Number of burn-in iterations for the RWMH algorithm.
+        n_chains (int): Number of MCMC chains.
+        final_model: The model object with a method `param_inverse`.
+        algo (str): Algorithm type for the optimization.
+        levels (int): Number of levels in the model.
+        force_sequential (bool): Flag to enforce sequential processing.
+        sigma_noise_bounds (Tuple[float, float]): Bounds for the sigma_noise hyperparameter.
+        n_data_bounds (Tuple[int, int]): Bounds for the n_data hyperparameter.
+        sigma_bounds (Tuple[float, float]): Bounds for the sigma hyperparameter.
+        rwmh_scaling_bounds (Tuple[float, float]): Bounds for the rwmh_scaling hyperparameter.
+
+    Returns:
+        Tuple[float, int, float, float]: The optimal values for sigma_noise, n_data, sigma, and rwmh_scaling.
+    """
+    
+    def evaluate_model(sigma_noise: float, n_data: int, sigma: float, rwmh_scaling: float) -> float:
+        """
+        Objective function that runs the simulation and returns the negative error for minimization.
+
+        Args:
+            sigma_noise (float): Noise standard deviation for the covariance noise matrix.
+            n_data (int): Number of data points to be used in the simulation.
+            sigma (float): Parameter used in the covariance likelihood calculation.
+            rwmh_scaling (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+
+        Returns:
+            float: The negative of the error to be minimized.
+        """
+        
+        # Running the model's parameter inversion method to compute the error
+        _, error, _ = final_model.param_inverse(
+            mean_prior=mean_prior, 
+            x_data = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), int(n_data)).reshape(-1, 1),  # Generate evaluation times
+            max_par=max(datahf[:, 1]), 
+            cov_prior=cov_prior, 
+            cov_noise=sigma_noise,
+            cov_likelihood=calculate_cov_likelihood(sigma, np.linspace(0., 5., int(n_data)).reshape(-1, 1)),
+            y_obs=process_data(datahf, parameters, np.linspace(0., 5., int(n_data)).reshape(-1, 1), Yhf)[1],
+            x_real=parameters,
+            number_chains=n_chains,
+            N=iterations,
+            burn_in=burnin,
+            levels=levels, 
+            diagnostic=True, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=rwmh_scaling,
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            forward_low_fidelity=forward_low_fidelity,
+            force_sequential=force_sequential,
+            fwd_LSTM_folder=fwd_LSTM_folder        )
+        
+        return -error  # Return the negative error for minimization
+
+    # Define parameter bounds for the Bayesian Optimization based on user input
+    pbounds = {
+        'sigma_noise': sigma_noise_bounds,  # Bounds for sigma_noise
+        'n_data': n_data_bounds,            # Bounds for n_data
+        'sigma': sigma_bounds,              # Bounds for sigma
+        'rwmh_scaling': rwmh_scaling_bounds # Bounds for rwmh_scaling
+    }
+
+    # Initialize the Bayesian Optimizer with the objective function and parameter bounds
+    optimizer = BayesianOptimization(
+        f=evaluate_model,
+        pbounds=pbounds,
+        random_state=42
+    )
+
+    # Run the optimization process
+    optimizer.maximize(init_points=5, n_iter=25)
+
+    # Retrieve the optimal parameter values
+    best_params = optimizer.max['params']
+
+    # Return the best parameters found
+    return best_params['sigma_noise'], int(best_params['n_data']), best_params['sigma'], best_params['rwmh_scaling']
+
+def run_param_inverse(
+    final_model, 
+    mean_prior: np.ndarray, 
+    fwd_LSTM_folder: str,
+    datahf: np.ndarray, 
+    cov_prior: np.ndarray, 
+    Yhf: np.ndarray, 
+    parameters: np.ndarray, 
+    sigma_noise: float, 
+    n_data: int, 
+    sigma: float, 
+    rwmh_scaling: float, 
+    rwmh_cov: np.ndarray, 
+    rwmh_adaptive: bool, 
+    iterations: int, 
+    burnin: int, 
+    n_chains: int, 
+    levels: int, 
+    algo: str, 
+    force_sequential: bool,
+    forward_low_fidelity: Optional[Callable] = None
+
+) -> Tuple[np.ndarray, float, np.ndarray]:
+    """
+    Calls the `param_inverse` method of `final_model` with the given parameters.
+
+    Args:
+        final_model: The model object with a `param_inverse` method.
+        mean_prior (np.ndarray): Prior mean vector.
+        datahf (np.ndarray): High-fidelity data array.
+        cov_prior (np.ndarray): Prior covariance matrix.
+        Yhf (np.ndarray): High-fidelity observations.
+        parameters (np.ndarray): Real parameter values for comparison.
+        sigma_noise (float): Noise standard deviation for the covariance noise matrix.
+        n_data (int): Number of data points to be used in the simulation.
+        sigma (float): Parameter used in the covariance likelihood calculation.
+        rwmh_scaling (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+        rwmh_cov (np.ndarray): Covariance matrix for the RWMH proposal distribution.
+        rwmh_adaptive (bool): Flag to enable adaptive RWMH.
+        iterations (int): Number of iterations for the RWMH algorithm.
+        burnin (int): Number of burn-in iterations for the RWMH algorithm.
+        n_chains (int): Number of MCMC chains.
+        levels (int): Number of levels in the model.
+        algo (str): Algorithm type for the optimization.
+        force_sequential (bool): Flag to enforce sequential processing.
+
+    Returns:
+        Tuple[np.ndarray, float, np.ndarray]: The inferred parameters, error, and diagnostic data.
+    """
+    
+    # Prepare the observational data and other required inputs for the param_inverse call
+    t_eval = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), n_data).reshape(-1, 1)  # Generate evaluation times
+    max_par = np.max(datahf[:, 1])
+    
+    # Calculate the covariance for the likelihood
+    cov_likelihood = calculate_cov_likelihood(sigma, t_eval)
+    
+    # Process the data to get y_obs
+    _, y_obs = process_data(datahf, parameters, t_eval, Yhf)
+    
+    # Call the `param_inverse` method from the `final_model`
+    inferred_parameters, error, diagnostics = final_model.param_inverse(
+        mean_prior=mean_prior,
+        x_data=t_eval,
+        max_par=max_par,
+        cov_prior=cov_prior,
+        cov_noise=sigma_noise,
+        cov_likelihood=cov_likelihood,
+        y_obs=y_obs,
+        x_real=parameters,
+        number_chains=n_chains,
+        N=iterations,
+        burn_in=burnin,
+        levels=levels,
+        diagnostic=True,
+        rwmh_cov=rwmh_cov,
+        rmwh_scaling=rwmh_scaling,
+        rwmh_adaptive=rwmh_adaptive,
+        algo=algo,
+        forward_low_fidelity=forward_low_fidelity,
+        force_sequential=force_sequential,
+        fwd_LSTM_folder=fwd_LSTM_folder     
+    )
+    
+    # Return the inferred parameters, error, and diagnostics
+    return inferred_parameters, error, diagnostics
+
 
 def run_simulation( 
                    datahf: np.ndarray, 
