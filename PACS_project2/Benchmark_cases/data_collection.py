@@ -97,17 +97,26 @@ class FidelityFunctionModified:
         :return: Dictionary containing parameters and evaluated function values.
         """
         if example == "Basic":
-            Nhf, Nlf, NepoLF, NepoHF = 50, 100, 2000, 2000
-            deltas = np.array([0, 10, 20])
+            Nhf, Nlf, NepoLF, NepoHF = 50, 80, 2500,2500 #50,100,2000, 2000
+            deltas = np.linspace(0., 28., 4)
+            deltas_val=np.linspace(np.min(deltas),np.max(deltas),3)
+            deltas_test=np.linspace(np.min(deltas),np.max(deltas),5)
+
         elif example == "Discontinuous":
             Nhf, Nlf, NepoLF, NepoHF = 16, 40, 2000, 5200
             deltas = np.linspace(0., 15., 5)
+            deltas_val=np.linspace(np.min(deltas),np.max(deltas),4)
+            deltas_test=np.linspace(np.min(deltas),np.max(deltas),6)
+
         elif example == "Oscillatory":
-            Nhf, Nlf, NepoLF, NepoHF = 15, 64, 1000, 3000
-            deltas = np.linspace(2 / 5, 8 / 5, 4) * np.pi
+            Nhf, Nlf, NepoLF, NepoHF = 20, 64, 1000, 2000       # Nhf=15  ,64,1000,  3000
+            deltas = np.linspace(1 / 5, 6 / 5, 5) * np.pi               #8
+            deltas_val=np.linspace(np.min(deltas),np.max(deltas),4)
+            deltas_test=np.linspace(np.min(deltas),np.max(deltas),6)
+
         else:
             raise ValueError(f"Unsupported example type: {example}")
-
+        
         xhf = np.linspace(0, 5, Nhf)
         xlf = np.linspace(0, 5, Nlf)
 
@@ -126,10 +135,14 @@ class FidelityFunctionModified:
             "Nlf": Nlf,
             "xhf": datahf,          
             "xlf": datalf,                       
+            "x_vallf":self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val),
+            "x_valhf":self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val),
             "x_test":np.linspace(0, 5, 10000),
-            "datatest":self._create_meshgrid(np.linspace(0, 5, 10000), deltas),        
             "Yhf": Yhf,
             "Ylf": Ylf,
+            "dataval_lf":self.modified_lowfid(self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,1]),        
+            "dataval_hf":self.modified_highfid(self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val)[:,1]),        
+            "datatest":self._create_meshgrid(np.linspace(0, 5, 10000), deltas_test),        
             "NepoLF": NepoLF,
             "NepoHF": NepoHF,
             "deltas": deltas

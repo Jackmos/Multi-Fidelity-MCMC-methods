@@ -11,6 +11,7 @@ from tensorflow.keras.optimizers import Adam, Nadam, Adamax, RMSprop
 from tensorflow.keras.models import Model
 from module_utils import *
 from Structure import *
+
 # Function to load context functions from a specified folder
 def load_context_functions(context_folder: str) -> bool:
     """
@@ -209,12 +210,16 @@ def kCrossVal(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str,
         x_train, x_val = x[train_index], x[test_index]
         y_train, y_val = y[train_index], y[test_index]
 
+        # Reshape y_val if necessary and calculate mean squared error
+        y_val = y_val.reshape(-1, 1) if len(y_val.shape) == 1 else y_val
+
         model.fit(x_train, y_train, epochs=Nepo, batch_size=len(train_index), verbose=0)  # Optimization: Efficient model training
         predictions = model.predict(x_val)
         score = np.mean(np.square(y_val - predictions[:, 0]))  # Optimization: Efficient calculation of the score
         scores.append(score)
 
     return np.mean(scores)
+
 
 def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
                     name: str, input_shape: int, output_shape:int) -> float:
@@ -240,6 +245,9 @@ def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dic
         x_train, x_val = x[train_index], x[test_index]
         y_train, y_val = y[train_index], y[test_index]
 
+        # Reshape y_val if necessary and calculate mean squared error
+        y_val = y_val.reshape(-1, 1) if len(y_val.shape) == 1 else y_val
+
         model = getModel(params, input_shape, name, output_shape)
         model.fit(x_train, y_train, epochs=Nepo, batch_size=len(train_index), verbose=0)  # Optimization: Efficient model training
         predictions = model.predict(x_val)
@@ -247,6 +255,7 @@ def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dic
         scores.append(score)
 
     return np.mean(scores)
+
 
 def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray, xlf: np.ndarray, 
                 ylf: np.ndarray, params: Dict[str, Any], name: str, input_shape: int, p: int = 1) -> float:
@@ -279,6 +288,9 @@ def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray,
         x_train = np.concatenate((xhf_train, xlf))
         yhf_train_aug = np.concatenate((yhf_train, np.full(Nlf, -10)))
         ylf_train_aug = np.concatenate((np.full(len(xhf_train), -10), ylf))
+
+        # Reshape y_val if necessary and calculate mean squared error
+        yhf_val = yhf_val.reshape(-1, 1) if len(yhf_val.shape) == 1 else yhf_val
 
         model = getModel(params, input_shape, name, yhf.shape[1])
         model.fit(x_train, [yhf_train_aug, ylf_train_aug], epochs=params['epochs'] * Nepo, batch_size=len(train_index), verbose=0)  # Optimization: Efficient model training

@@ -248,6 +248,8 @@ class NetworkFactory:
                       params: Optional[dict] = None,
                       data_train: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
                       output_train: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
+                      data_val: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
+                      output_val: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
                       N: int = 1000,
                       n: int = 10,
                       train: bool = True,
@@ -264,6 +266,8 @@ class NetworkFactory:
         - params (Optional[dict]): Dictionary of parameters for the network.
         - data_train (Optional[Union[np.ndarray, List[np.ndarray]]]): Training data.
         - output_train (Optional[Union[np.ndarray, List[np.ndarray]]]): Training output data.
+        - data_val (Optional[Union[np.ndarray, List[np.ndarray]]]): Training data.
+        - output_val (Optional[Union[np.ndarray, List[np.ndarray]]]): Training output data.
         - N (int): Number of samples.
         - n (int): Some integer parameter.
         - train (bool): Flag indicating whether to train the network.
@@ -289,7 +293,7 @@ class NetworkFactory:
             if match:
                 # Extract the number from the pattern (e.g., 5 in "5STEP") and build a MultiFidelity network.
                 n_step = int(match.group(1))
-                return MultiFidelity(names, params, data_train, output_train, N, n, train,do_HPO, verbose, device=device, profiler=profiler)
+                return MultiFidelity(names, params, data_train, output_train, data_val, output_val, N, n, train,do_HPO, verbose, device=device, profiler=profiler)
             else:
                 # If network type is neither a valid enum nor a recognizable pattern, raise an error.
                 raise ValueError(f"Invalid network type: {network_type}")
@@ -297,7 +301,7 @@ class NetworkFactory:
         # Check if the network type is a low-fidelity, mid-fidelity, high-fidelity, or other similar neural network.
         if network_type_enum in {NetworkType.LF, NetworkType.MF, NetworkType.HF, NetworkType.HFLIN,NetworkType.SINGLE, NetworkType.HFPER}:
             # Build a neural network with the provided parameters and configurations.
-            return Neural_Network(network_type, params, data_train, output_train, N, n, train, do_HPO, verbose, device=device, profiler=profiler)
+            return Neural_Network(network_type, params, data_train, output_train,data_val, output_val, N, n, train, do_HPO, verbose, device=device, profiler=profiler)
         
         # Special case for step-based networks (could be related to MultiFidelity).
         elif network_type_enum == NetworkType["STEP"]:
@@ -306,17 +310,17 @@ class NetworkFactory:
                 raise ValueError("For MultiFidelity network, data_train and output_train must be lists of numpy arrays.")
             
             # Create a MultiFidelity network.
-            return MultiFidelity(names, params, data_train, output_train, N, n,train, do_HPO, verbose, device=device, profiler=profiler)
+            return MultiFidelity(names, params, data_train, output_train,data_val, output_val, N, n,train, do_HPO, verbose, device=device, profiler=profiler)
         
         # Case for intermediate networks, such as transition networks between fidelity levels.
         elif network_type_enum == NetworkType.INTER:
             # Build and return an Intermediate network.
-            return Intermediate(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, n=n, train=train, do_HPO=do_HPO, device=device)
+            return Intermediate(name=network_type, params=params, data_train=data_train, output_train=output_train,data_val=data_val, output_val=output_val, N=N, n=n, train=train, do_HPO=do_HPO, device=device)
         
         # Cases for LSTM-based networks, including regular LSTM and support LSTM types.
         elif network_type_enum == NetworkType.LSTM or network_type_enum == NetworkType.LSTM_SUPPORT  or network_type_enum == NetworkType.LSTM_SUPPORT2:
             # Build and return an LSTM network.
-            return LSTM_network(name=network_type, params=params, data_train=data_train, output_train=output_train, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
+            return LSTM_network(name=network_type, params=params, data_train=data_train, output_train=output_train,data_val=data_val, output_val=output_val, N=N, train=train, do_HPO=do_HPO, verbose=verbose, device=device)
 
         # Raise an error if none of the valid cases match.
         raise ValueError(f"Invalid network type: {network_type}")
@@ -602,12 +606,13 @@ class INetwork(ABC):
             algo=algo, 
             subsampling_rate=subsampling_rate,
             force_sequential=force_sequential,
-            dim=dim
+            dim=dim, 
+            num_params=x_real.shape[0]
         )
 
         # Generate histograms for visualization of estimates.
         if diagnostic:
-            self.plot_diagnostics(estimates, x_real, max_par)
+            self._plot_diagnostics(estimates, x_real, max_par)
         
         # Compute the relative error between estimates and x_real
         error = relative_error(estimates, x_real)
@@ -708,7 +713,7 @@ class INetwork(ABC):
 
         # Plot diagnostics if required
         if diagnostic:
-            self.plot_diagnostics(estimates, x_real, max_par)
+            self._plot_diagnostics(estimates, x_real, max_par)
 
         return estimates, error,parameters
 
@@ -810,6 +815,8 @@ class Neural_Network(INetwork):
         params: Optional[Dict[str, Any]] = None, 
         data_train: Optional[np.ndarray] = None, 
         output_train: Optional[np.ndarray] = None, 
+        data_val: Optional[np.ndarray] = None, 
+        output_val: Optional[np.ndarray] = None, 
         N: int = 1000, 
         n: int = 10, 
         train: bool = True, 
@@ -827,6 +834,8 @@ class Neural_Network(INetwork):
             params (Optional[dict]): Hyperparameters of the network.
             data_train (Optional[np.ndarray]): Training data.
             output_train (Optional[np.ndarray]): Training outputs.
+            data_val (Optional[np.ndarray]): HPO data.
+            output_val (Optional[np.ndarray]): HPO outputs data.
             N (int): Number of epochs for training.
             n (int): Batch size for training.
             train (bool): Flag to indicate if training should be performed.
@@ -860,10 +869,10 @@ class Neural_Network(INetwork):
 
         # Perform hyperparameter optimization if required or if no parameters are provided
         if do_HPO:
-            if output_train is None or data_train is None:
+            if output_val is None or data_val is None:
                 warning_message = "Not enough data given for HPO!"
                 warnings.warn(warning_message, UserWarning)
-            self._params = self.HPO(data_train, output_train)
+            self._params = self.HPO(data_val, output_val)
             print("New parameters identified during HPO:")
             pprint(self._params)
 
@@ -947,6 +956,9 @@ class Neural_Network(INetwork):
         Returns:
             Any: The training history.
         """
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
 
         # Enable mixed precision training for memory optimization
         if self.device.startswith('/GPU'):
@@ -977,17 +989,20 @@ class Neural_Network(INetwork):
             with Suppressor():  # Suppress output if verbosity is off
                 return self.model.predict(x_test)
 
-    def HPO(self, data_train: np.ndarray, output_train: np.ndarray) -> Dict[str, Any]:
+    def HPO(self, data_val: np.ndarray, output_val: np.ndarray) -> Dict[str, Any]:
         """
         Performs hyperparameter optimization using Bayesian optimization.
 
         Args:
-            data_train (np.ndarray): Training data.
-            output_train (np.ndarray): Training outputs.
+            data_val (np.ndarray): Training data.
+            output_val (np.ndarray): Training outputs.
 
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
 
         def objective(trial):
             K.clear_session()
@@ -1004,9 +1019,9 @@ class Neural_Network(INetwork):
 
             # Training within HPO with device control
             with tf.device(self.device if self.device else '/GPU:0'):  # Default to GPU if not specified and an appropriate GPU is present                # Perform k-fold cross-validation to evaluate the model
-                loss = kCrossVal_parallel(self._N, data_train, output_train, 
-                                          params, self.name, self.input_shape, 
-                                          self.output_shape
+                loss = kCrossVal_parallel(self._N, data_val, output_val, 
+                                          params, self.name, self._get_shape(data_val), 
+                                          self._get_shape(output_val)
                                           )    
             # Implement early stopping within the HPO loop
             trial.report(loss, step=trial.number)
@@ -1075,6 +1090,8 @@ class MultiFidelity(INetwork):
         params: Optional[List[dict]] = None, 
         data_train: Optional[List[np.ndarray]] = None, 
         output_train: Optional[List[np.ndarray]] = None, 
+        data_val: Optional[List[np.ndarray]] = None, 
+        output_val: Optional[List[np.ndarray]] = None,
         N: Optional[List[int]] = None, 
         n: Optional[List[int]] = None, 
         train: bool = True,
@@ -1091,6 +1108,8 @@ class MultiFidelity(INetwork):
             params (Optional[List[dict]]): Parameters for each network.
             data_train (Optional[List[np.ndarray]]): Training data for the networks.
             output_train (Optional[List[np.ndarray]]): Training outputs for each network.
+            data_val (Optional[List[np.ndarray]]): HPO data for the networks.
+            output_val (Optional[List[np.ndarray]]): HPO outputs for each network.
             N (Optional[List[int]]): Number of epochs for each network.
             n (Optional[List[int]]): Batch sizes for each network.
             train (bool): Whether to train the network
@@ -1133,7 +1152,7 @@ class MultiFidelity(INetwork):
         self._params=params
         # Initialize training data for the first model
         data_train_support = data_train[0]
-
+        data_val_support=data_val[0]
         # Iterate over the network names to create and train each model
         for index, name in enumerate(names):
             # Build and train the network for the current fidelity level
@@ -1142,6 +1161,8 @@ class MultiFidelity(INetwork):
                 params=params[index],
                 data_train=data_train_support,     # Use current training data
                 output_train=output_train[index],  # Use corresponding output data
+                data_val=data_val_support,     # Use current training data
+                output_val=output_val[index],                
                 N=self._Ns[index],
                 n=self._ns[index],
                 train=train,
@@ -1155,10 +1176,12 @@ class MultiFidelity(INetwork):
             # Update training data for the next model, if any
             if (index + 1) < len(data_train) and train:
                 data_train_support = data_train[index + 1]
-                
+                data_val_support = data_val[index + 1]
+
                 # Incorporate predictions from previous models into the training data
                 for l in range(index + 1):
                     data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
+                    data_val_support = np.c_[data_val_support, self.model_list[l].prediction(data_val_support)]
 
     def plot_training_loss(self) -> None:
         """
@@ -1330,7 +1353,11 @@ class MultiFidelity(INetwork):
             raise ValueError("Not enough data given")
         
         data_train_support = self._data_train[0]
-                
+
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
+         
         # Iterate over the network names to create and train each model
         for index, name in enumerate(self.names):
             # Build and train the network for the current fidelity level
@@ -1357,21 +1384,29 @@ class MultiFidelity(INetwork):
                 for l in range(index + 1):
                     data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
     
-    def HPO(self,device: str = None, profiler: Optional[TensorBoard] = None):
+    def HPO(self,device: str = None, profiler: Optional[TensorBoard] = None,data_val: Optional[List[np.ndarray]] = None, 
+        output_val: Optional[List[np.ndarray]] = None,):
         """
         Perform Hyperparameter Optimization (HPO) for all models in the MultiFidelity network.
         
         Args:
             device (str): Device to run the HPO on (e.g., '/CPU:0', '/GPU:0').
             profiler (Optional[TensorBoard]): Profiler for monitoring HPO performance.
+            data_val (Optional[List[np.ndarray]]): HPO data for the networks.
+            output_val (Optional[List[np.ndarray]]): HPO outputs for each network.
         """
         if self._params==None:
             raise ValueError("params list is empty")
         
         if self._data_train==None or self._output_train==None:
             raise ValueError("Not enough data given")
-    
+        
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
+
         data_train_support = self._data_train[0]
+        data_val_support = data_val[0]
 
         for index, name in enumerate(self.names):
             # Build and train the network for the current fidelity level
@@ -1380,6 +1415,8 @@ class MultiFidelity(INetwork):
                 params=self._params[index],
                 data_train=data_train_support,  # Use current training data
                 output_train=self._output_train[index],  # Use corresponding output data
+                data_val=data_val_support,  # Use current training data
+                output_val=output_val[index],  # Use corresponding output data
                 N=self._Ns[index],
                 n=self._ns[index],
                 do_HPO=True,
@@ -1392,10 +1429,12 @@ class MultiFidelity(INetwork):
             # Update training data for the next model, if any
             if (index + 1) < len(self._data_train):
                 data_train_support = self._data_train[index + 1]
-                
+                data_val_support = self._data_val[index + 1]
+
                 # Incorporate predictions from previous models into the training data
                 for l in range(index + 1):
                     data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
+                    data_val_support = np.c_[data_val_support, self.model_list[l].prediction(data_val_support)]
 
 
     def get_output(self) -> np.ndarray:
@@ -1415,6 +1454,8 @@ class LSTM_network(INetwork):
                  params: Optional[dict] = None, 
                  data_train: Optional[np.ndarray] = None, 
                  output_train: Optional[np.ndarray] = None, 
+                 data_val: Optional[np.ndarray] = None, 
+                 output_val: Optional[np.ndarray] = None, 
                  N: int = 1000, 
                  dim_input: int = 0,
                  dim_output: int = 0,
@@ -1431,6 +1472,8 @@ class LSTM_network(INetwork):
             params (Optional[dict]): Hyperparameters for the network.
             data_train (Optional[np.ndarray]): Training data.
             output_train (Optional[np.ndarray]): Training outputs.
+            data_val (Optional[np.ndarray]): HPO data.
+            output_val (Optional[np.ndarray]): HPO outputs.
             N (int): Number of epochs for training.
             dim_input (int): Dimension of input data.
             dim_output (int): Dimension of output data.
@@ -1465,9 +1508,9 @@ class LSTM_network(INetwork):
 
         # Perform hyperparameter optimization if required       
         if do_HPO:
-            if output_train is None or data_train is None:
+            if output_val is None or data_val is None:
                 warnings.warn("Not enough data given!", UserWarning)
-            self._params = self.HPO(data_train, output_train)
+            self._params = self.HPO(data_val, output_val)
             print("New parameters identified during HPO:")
             pprint(self._params)
 
@@ -1605,6 +1648,11 @@ class LSTM_network(INetwork):
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
+
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
+
         def objective(trial):
             K.clear_session()
             params = {
@@ -1851,6 +1899,11 @@ class Intermediate(INetwork):
         Returns:
             Any: The training history.
         """
+
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
+
         if callbacks is not None:
             with tf.device(device):
 
@@ -1891,7 +1944,10 @@ class Intermediate(INetwork):
         Returns:
             Dict[str, Any]: The best hyperparameters found.
         """
-        print("HPO name ", self.name )
+        # Set random seed for reproducibility
+        tf.keras.utils.set_random_seed(29)
+        tf.config.experimental.enable_op_determinism()
+
         def objective(trial):
             K.clear_session()
             tf.compat.v1.reset_default_graph()  # Ensure clean graph for each trial

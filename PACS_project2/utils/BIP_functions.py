@@ -13,11 +13,123 @@ from cuqi.sampler import MH, NUTS, pCN
 from datetime import datetime
 import uuid
 import warnings
+from numba import njit
 
 # Suppress specific UserWarnings and RuntimeWarnings
 warnings.filterwarnings("ignore", category=UserWarning, message="qoi group is not defined in the InferenceData scheme")
 warnings.filterwarnings("ignore", category=UserWarning, message="Your data appears to have a single value or no finite values")
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in scalar divide")
+
+
+def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo: str, rwmh_adaptive: bool) -> str:
+    """
+    Create a unique folder name for saving outputs based on key MCMC parameters.
+
+    Args:
+        n (int): Number of MCMC samples.
+        rwmh_cov (np.ndarray): Covariance matrix for the Random Walk Metropolis-Hastings algorithm.
+        rmwh_scaling (float): Scaling factor for the Metropolis-Hastings algorithm.
+        algo (str): The algorithm used ('MH', 'AM', 'CN', 'DREAMZ').
+        rwmh_adaptive (bool): Indicates whether the algorithm is adaptive.
+
+    Returns:
+        str: The path to the created folder.
+    """
+    # Convert key parameters to strings that are safe to use in a file path
+    rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov, precision=2).replace("\n", "")
+    rwmh_adaptive_str = "adaptive" if rwmh_adaptive else "non_adaptive"
+
+    # Create a folder name based on key parameters
+    folder_name = (
+        f"MCMC_output_n{n}_cov{rwmh_cov_str}_scaling{rmwh_scaling}_algo{algo}_{rwmh_adaptive_str}_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
+
+    return create_folder_name(folder_name)
+
+
+
+def setup_proposal(algo: str, rwmh_cov: np.ndarray, rmwh_scaling: float, rwmh_adaptive: bool, period: int, t0: int, dim: int, num_params:int):
+    """
+    Set up the proposal distribution based on the chosen algorithm.
+
+    Args:
+        algo (str): The algorithm used ('MH', 'AM', 'CN', 'DREAMZ').
+        rwmh_cov (np.ndarray): Covariance matrix for the proposal distribution.
+        rmwh_scaling (float): Scaling factor for the Metropolis-Hastings algorithm.
+        rwmh_adaptive (bool): Indicates whether the algorithm is adaptive.
+        period (int): The period for adaptation (if applicable).
+        t0 (int): Initial time for adaptation (if applicable).
+        dim (int): Dimensionality of the problem (used in DREAMZ).
+        num_params (int): Number of parameters to be estiamted
+
+    Returns:
+        Object: An instance of the proposal distribution.
+    """
+    if algo == "MH":
+        return GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+    elif algo == "AM":
+        return AdaptiveMetropolis(C0=rwmh_cov*np.eye(num_params), adaptive=rwmh_adaptive, period=period, t0=t0)
+    elif algo == "CN":
+        return CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive, period=period)
+    elif algo == "DREAMZ":
+        return DREAMZ(M0=10 * dim, adaptive=rwmh_adaptive, period=period)
+    else:
+        raise ValueError(f"Unknown algorithm {algo}")
+
+
+
+def perform_diagnostics(idata: az.InferenceData, folder_name: str) -> az.data.inference_data.InferenceData:
+    """
+    Perform and save MCMC diagnostic plots and summary statistics.
+
+    Args:
+        idata (az.InferenceData): Inference data object containing MCMC samples.
+        folder_name (str): The path to the folder where the diagnostics will be saved.
+
+    Returns:
+        az.data.inference_data.InferenceData: Summary statistics of the MCMC samples.
+    """
+    # Extract summary statistics
+    summary = az.summary(idata)
+    mean = summary['mean']
+
+    print(summary)
+
+    # Plot and save diagnostics
+    az.plot_trace(idata)
+    plt.savefig(os.path.join(folder_name, "trace_plot.png"))
+    plt.close()
+
+    # Plot and save autocorrelation plots
+    az.plot_autocorr(idata)
+    plt.savefig(os.path.join(folder_name, "autocorrelation_plot.png"))
+    plt.close()
+
+    # Plot and save ESS (Effective Sample Size) plots
+    az.plot_ess(idata)
+    plt.savefig(os.path.join(folder_name, "ess_plot.png"))
+    plt.close()
+
+    az.plot_ess(idata, kind='local')
+    plt.savefig(os.path.join(folder_name, "ess_local_plot.png"))
+    plt.close()
+
+    # Plot and save rank plots
+    az.plot_rank(idata)
+    plt.savefig(os.path.join(folder_name, "rank_plot.png"))
+    plt.close()
+
+    # Save summary statistics
+    with open(os.path.join(folder_name, "summary_statistics.txt"), "w") as f:
+        f.write("MCMC Summary Statistics:\n")
+        f.write(f"Estimated Parameters (mean):\n{mean}\n")
+        f.write(f"Standard Deviation (sd):\n{summary['sd']}\n")
+        f.write(f"Effective Sample Size (ESS):\n{summary['ess_bulk']}\n")
+        f.write(f"ESS Tail:\n{summary['ess_tail']}\n")
+        f.write(f"R-hat:\n{summary['r_hat']}\n")
+
+    return summary
 
 
 def MCMC(
@@ -34,6 +146,7 @@ def MCMC(
     rwmh_adaptive: bool = False, 
     algo: str = "MH", 
     dim: int = 0,
+    num_params:int=1,
     force_sequential: bool = False
 ) -> np.ndarray:
     """
@@ -53,6 +166,7 @@ def MCMC(
     - rwmh_adaptive (bool): Whether to use an adaptive proposal. Default is False.
     - algo (str): Algorithm to use ('MH', 'AM', 'CN', 'DREAMZ'). Default is 'MH'.
     - dim (int): Dimensionality of the posterior distribution. Default is 0.
+    - num_params (int): number of parameters to be estimated. Default is 1.
     - force_sequential (bool): Whether to force sequential sampling. Default is False.
 
     Returns:
@@ -61,38 +175,16 @@ def MCMC(
     """
 
     # Create a unique folder name for saving outputs
-    # Convert key parameters to strings that are safe to use in a file path
-    rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov, precision=2).replace("\n", "")
-    rwmh_adaptive_str = "adaptive" if rwmh_adaptive else "non_adaptive"
-
-    # Create a folder name based on key parameters
-    folder_name = f"MCMC_output_n{n}_cov{rwmh_cov_str}_scaling{rmwh_scaling}_algo{algo}_{rwmh_adaptive_str}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # Replace any potential forbidden characters (like slashes) in folder names
-    folder_name = folder_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
-
-    # Ensure the folder name is not too long (max 255 characters for most file systems)
-    folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
-    os.makedirs(folder_name, exist_ok=True)
+    folder_name = create_output_folder(n, rwmh_cov, rmwh_scaling, algo, rwmh_adaptive)
 
     # Obtain the Maximum A Posteriori (MAP) estimate for the initial parameters
     MAP = get_MAP(my_posterior[-1])  # For the last element in the posterior
 
     # Set up the proposal distribution based on the chosen algorithm
-    if algo == "MH":
-        my_proposal = GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
-    elif algo == "AM":
-        my_proposal = AdaptiveMetropolis(C0=rwmh_cov, adaptive=rwmh_adaptive, period=period, t0=t0)
-    elif algo == "CN":
-        my_proposal = CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive, period=period)
-    elif algo == "DREAMZ":
-        my_proposal = DREAMZ(M0=10 * dim, adaptive=rwmh_adaptive, period=period)
-    else:
-        raise ValueError(f"Unknown algorithm {algo}")
+    my_proposal = setup_proposal(algo, rwmh_cov, rmwh_scaling, rwmh_adaptive, period, t0, dim, num_params)
 
     # Ensure subsampling_rate is a list of ints
-    if isinstance(subsampling_rate, int):
-        subsampling_rate = [subsampling_rate] * (len(my_posterior) - 1)
+    subsampling_rate = [subsampling_rate] * (len(my_posterior) - 1) if isinstance(subsampling_rate, int) else subsampling_rate
 
     # Perform MCMC sampling
     my_chains = sample(
@@ -106,56 +198,17 @@ def MCMC(
     )
 
     # Convert the chains into inference data
-    if isinstance(my_posterior, list):
-        if len(my_posterior) > 1:
-            idata = to_inference_data(my_chains, level=(len(my_posterior) - 1), burnin=burnin)
-        else:
-            idata = to_inference_data(my_chains, burnin=burnin)
-    else:
-        idata = to_inference_data(my_chains, burnin=burnin)
+    idata = to_inference_data(my_chains, level=(len(my_posterior) - 1), burnin=burnin) if len(my_posterior) > 1 else to_inference_data(my_chains, burnin=burnin)
 
-    # Extract summary statistics
-    summary = az.summary(idata)
+
+    if diagnostic:
+        summary = perform_diagnostics(idata, folder_name)
+    else:
+        summary = az.summary(idata)
+
     mean = summary['mean']
     estimates = np.array(mean)
     print(f"Estimated values are {estimates}")
-
-    # Save diagnostics and results if requested
-    if diagnostic:
-        print(summary)
-
-        # Plot and save trace plots
-        az.plot_trace(idata)
-        plt.savefig(os.path.join(folder_name, "trace_plot.png"))
-        plt.close()
-
-        # Plot and save autocorrelation plots
-        az.plot_autocorr(idata)
-        plt.savefig(os.path.join(folder_name, "autocorrelation_plot.png"))
-        plt.close()
-
-        # Plot and save ESS (Effective Sample Size) plots
-        az.plot_ess(idata)
-        plt.savefig(os.path.join(folder_name, "ess_plot.png"))
-        plt.close()
-
-        az.plot_ess(idata, kind='local')
-        plt.savefig(os.path.join(folder_name, "ess_local_plot.png"))
-        plt.close()
-
-        # Plot and save rank plots
-        az.plot_rank(idata)
-        plt.savefig(os.path.join(folder_name, "rank_plot.png"))
-        plt.close()
-
-        # Save summary statistics to a text file
-        with open(os.path.join(folder_name, "summary_statistics.txt"), "w") as f:
-            f.write("MCMC Summary Statistics:\n")
-            f.write(f"Estimated Parameters (mean):\n{mean}\n")
-            f.write(f"Standard Deviation (sd):\n{summary['sd']}\n")
-            f.write(f"Effective Sample Size (ESS):\n{summary['ess_bulk']}\n")
-            f.write(f"ESS Tail:\n{summary['ess_tail']}\n")
-            f.write(f"R-hat:\n{summary['r_hat']}\n")
 
     return estimates, {
         'expected_param': mean, 
@@ -164,6 +217,96 @@ def MCMC(
         'ess_tail': summary['ess_tail'], 
         'r_hat': summary['r_hat']
     }
+
+def create_folder_name(base_name: str, max_length: int = 255) -> str:
+    """
+    Creates a safe and unique folder name based on the base name.
+    
+    Ensures the folder name is valid for most file systems by replacing 
+    forbidden characters and ensuring the name doesn't exceed the max length.
+
+    Args:
+        base_name (str): The base name for the folder.
+        max_length (int): Maximum length for the folder name (default is 255).
+
+    Returns:
+        str: The path to the created folder.
+    """
+    # Replace forbidden characters
+    folder_name = base_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
+    
+    # Ensure folder name doesn't exceed max length
+    if len(folder_name) > max_length:
+        folder_name = folder_name[:max_length - 9] + "_" + uuid.uuid4().hex[:8]
+    
+    # Create the directory if it doesn't exist
+    os.makedirs(folder_name, exist_ok=True)
+    
+    return folder_name
+
+
+@njit
+def create_trace_plot(chains: np.ndarray, folder_name: str) -> None:
+    """
+    Create and save trace plots for MCMC chains.
+
+    Args:
+        chains (np.ndarray): A 3D array containing MCMC chains with dimensions (n_chains, n_params, n_samples).
+        folder_name (str): The path to the folder where the plots will be saved.
+
+    Returns:
+        None
+    """
+    for l in range(chains.shape[1]):
+        plt.figure(figsize=(10, 4))
+        for i in range(chains.shape[0]):
+            plt.plot(chains[i, l, :])
+        plt.xlabel('Sample')
+        plt.ylabel('Value')
+        plt.title(f'Trace Plot for variable {l}')
+        plt.legend([f'Chain {i+1}' for i in range(chains.shape[0])])
+        plt.savefig(os.path.join(folder_name, f"trace_plot_var_{l}.png"))
+        plt.close()
+
+
+@njit
+def calculate_statistics(estimates: np.ndarray) -> tuple:
+    """
+    Calculate the mean and standard deviation of the estimated parameters.
+
+    Args:
+        estimates (np.ndarray): A 2D array of estimated parameters with dimensions (n_params, n_samples).
+
+    Returns:
+        tuple: A tuple containing the mean and standard deviation of the estimates.
+    """
+    mean = np.mean(estimates, axis=1)
+    std_dev = np.std(estimates, axis=1)
+    return mean, std_dev
+
+
+@njit
+def save_diagnostics(folder_name: str, estimates: np.ndarray, ess: float, r_hat: float) -> None:
+    """
+    Save diagnostic statistics to a text file.
+
+    Args:
+        folder_name (str): The path to the folder where the diagnostics will be saved.
+        estimates (np.ndarray): A 2D array of estimated parameters with dimensions (n_params, n_samples).
+        ess (float): The effective sample size.
+        r_hat (float): The R-hat statistic for convergence diagnostics.
+
+    Returns:
+        None
+    """
+    with open(os.path.join(folder_name, "diagnostic_stats.txt"), "w") as f:
+        f.write("MCMC Diagnostics:\n")
+        f.write(f"Estimated Parameters (mean): {np.mean(estimates, axis=1)}\n")
+        f.write(f"Standard Deviation: {np.std(estimates, axis=1)}\n")
+        f.write(f"Effective Sample Size (ESS): {ess}\n")
+        if r_hat is not None:
+            f.write(f"R-hat: {r_hat}\n")
+        f.write("\n")
 
 
 def MCMC_cuqi(
@@ -204,14 +347,9 @@ def MCMC_cuqi(
 
     # Create a folder name based on key parameters for saving outputs
     adapt_str = "adaptive" if adapt else "non_adaptive"
-    folder_name = f"MCMC_cuqi_n{n}_algo{algo}_{adapt_str}_scale{scale}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    base_name = f"MCMC_cuqi_n{n}_algo{algo}_{adapt_str}_scale{scale}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    folder_name = create_folder_name(base_name)
 
-    # Replace any potential forbidden characters in folder names
-    folder_name = folder_name.replace(" ", "").replace("[", "").replace("]", "").replace(".", "p").replace(",", "_")
-
-    # Ensure the folder name is not too long (max 255 characters for most file systems)
-    folder_name = (folder_name[:245] + "_" + uuid.uuid4().hex[:8]) if len(folder_name) > 255 else folder_name
-    os.makedirs(folder_name, exist_ok=True)
 
     # Initialize arrays for storing results
     estimates = np.empty((m, 0))
@@ -249,16 +387,8 @@ def MCMC_cuqi(
         post = np.concatenate((post, result[2]), axis=1)
 
     # Generate and save trace plots for each parameter
-    for l in range(chains.shape[1]):
-        plt.figure(figsize=(10, 4))
-        for i in range(chains.shape[0]):
-            plt.plot(chains[i, l, :])
-        plt.xlabel('Sample')
-        plt.ylabel('Value')
-        plt.title(f'Trace Plot for variable {l}')
-        plt.legend([f'Chain {i+1}' for i in range(chains.shape[0])])
-        plt.savefig(os.path.join(folder_name, f"trace_plot_var_{l}.png"))
-        plt.close()
+    create_trace_plot(chains, folder_name)
+
 
     # Perform diagnostic analysis if requested
     if diagnostic:
@@ -295,137 +425,13 @@ def MCMC_cuqi(
         plt.close()
 
         # Save the diagnostic statistics to a text file
-        with open(os.path.join(folder_name, "diagnostic_stats.txt"), "w") as f:
-            f.write("MCMC Diagnostics:\n")
-            f.write(f"Estimated Parameters (mean): {np.mean(estimates, axis=1)}\n")
-            f.write(f"Standard Deviation: {np.std(estimates, axis=1)}\n")
-            f.write(f"Effective Sample Size (ESS): {ess}\n")
-            if r_hat is not None:
-                f.write(f"R-hat: {r_hat}\n")
-            f.write("\n")
+        save_diagnostics(folder_name, estimates, ess, r_hat)
+
     
-    # Return the parameter estimates and summary statistics
-    return estimates, {
-        'expected_param': np.mean(estimates, axis=1), 
-        'std_dev': np.std(estimates, axis=1), 
-        'ess': ess, 
-        'r_hat': r_hat
-    }
-# def MCMC_cuqi(
-#     y: Any, 
-#     x: Any, 
-#     observation: np.ndarray, 
-#     N: int, 
-#     m:int,
-#     burn_in: int, 
-#     n: int = 1, 
-#     diagnostic: bool = True, 
-#     algo: str = "MH", 
-#     adapt: bool = False, 
-#     scale: float = 0.3,
-#     parallel: bool = False
-# ) -> np.ndarray:
-#     """
-#     Perform MCMC sampling using CUQI library.
+    # Calculate and return statistics
+    mean, std_dev = calculate_statistics(estimates)
+    return estimates, {'expected_param': mean, 'std_dev': std_dev, 'ess': ess, 'r_hat': r_hat}
 
-#     Args:
-#         y (Any): Dependent variable.
-#         x (Any): Independent variable.
-#         observation (np.ndarray): Observed data.
-#         N (int): Number of samples to draw.
-#         m (int): dimension of the QoI
-#         burn_in (int): Number of burn-in samples to discard.
-#         n (int, optional): Number of chains. Defaults to 1.
-#         diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
-#         algo (str, optional): Sampling algorithm to use. Defaults to "MH".
-#         adapt (bool, optional): Whether to use adaptive sampling. Defaults to False.
-#         scale (float, optional): Scaling factor for MH algorithm. Defaults to 0.3.
-#         parallel (bool, optional): Whether to run chains in parallel. Defaults to False.
-
-#     Returns:
-#         np.ndarray: Array of estimated parameter means.
-#     """
-
-#     estimates = np.empty((1, 0))
-#     chains = np.empty((0, 1, N - burn_in))
-#     post = np.empty((1, 0))
-#     posterior = JointDistribution(x, y)(y=observation)
-
-#     if parallel:
-#         logging.getLogger('tensorflow').setLevel(logging.ERROR)
-#         tf.get_logger().setLevel('ERROR')
-#         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
-#         futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
-#         results = ray.get(futures)
-#         ray.shutdown()
-#     else:
-#         results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
-
-#     for result in results:
-#         estimates = np.column_stack((estimates, result[0])) # non crea problemi per più parametri?
-#         chains = np.concatenate((chains, result[1]), axis=0)
-#         post = np.concatenate((post, result[2]), axis=1)
-
-#     for l in range(chains.shape[1]):
-#         plt.figure(figsize=(10, 4))
-#         for i in range(chains.shape[0]):
-#             plt.plot(chains[i, l, :])
-#         plt.xlabel('Sample')
-#         plt.ylabel('Value')
-#         plt.title(f'Trace Plot for variable {l}')
-#         plt.legend([f'Chain {i+1}' for i in range(chains.shape[0])])
-#         plt.show()
-
-#     if diagnostic:
-#         num_bins = 20
-#         plt.figure()
-#         for num in range(post.shape[0]):
-#             bin_edges = np.linspace(np.min(post[num, :]), np.max(post[num, :]), num_bins + 1)
-#             hist, _ = np.histogram(post[num, :], bins=bin_edges)
-#             hist = hist / post.shape[1]
-#             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-#             plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
-#             plt.xlabel('Value')
-#             plt.ylabel('Probability')
-#             plt.title('Distribution')
-#             plt.legend()
-#             plt.show()
-
-#         autocov = az.autocov(chains[:, 0, :])
-#         ess = az.ess(chains[:, 0, :])
-#         print(f"ESS values = {ess}")
-#         plt.figure()
-#         plt.plot(autocov[0, :])
-#         plt.title('Autocovariance first chain')
-#         plt.xlabel('Lag')
-#         plt.ylabel('Autocovariance')
-#         plt.legend()
-#         plt.show()
-
-
-#     # mean=az.summary(idata)['mean']
-#     # estimates = np.array(mean)
-#     # print(f"Estimated values are {estimates}")
-
-#     # if diagnostic:
-
-#     #     print(az.summary(idata))
-
-#     #     az.plot_trace(idata)
-#     #     print("----  Autocorrelation  ----")
-#     #     az.plot_autocorr(idata)
-#     #     print("----  Effective Sample Size  ----")
-#     #     az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
-#     #     print("----  Effective Sample Size per iteration  ----")        
-#     #     az.plot_ess(idata,kind='local')        
-#     #     # print("----  Pair Plots  ----")
-#     #     # az.plot_pair(idata)
-#     #     print("----  Rank Plots  ----")
-#     #     az.plot_rank(idata)
-
-
-
-#     return estimates
 
 
 @ray.remote
@@ -560,3 +566,129 @@ def plot_hist(
     plt.xticks(categories)
     plt.legend(["Real value", "Estimate"])
     plt.show()
+
+
+
+
+
+
+
+
+
+
+
+    # def MCMC_cuqi(
+#     y: Any, 
+#     x: Any, 
+#     observation: np.ndarray, 
+#     N: int, 
+#     m:int,
+#     burn_in: int, 
+#     n: int = 1, 
+#     diagnostic: bool = True, 
+#     algo: str = "MH", 
+#     adapt: bool = False, 
+#     scale: float = 0.3,
+#     parallel: bool = False
+# ) -> np.ndarray:
+#     """
+#     Perform MCMC sampling using CUQI library.
+
+#     Args:
+#         y (Any): Dependent variable.
+#         x (Any): Independent variable.
+#         observation (np.ndarray): Observed data.
+#         N (int): Number of samples to draw.
+#         m (int): dimension of the QoI
+#         burn_in (int): Number of burn-in samples to discard.
+#         n (int, optional): Number of chains. Defaults to 1.
+#         diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
+#         algo (str, optional): Sampling algorithm to use. Defaults to "MH".
+#         adapt (bool, optional): Whether to use adaptive sampling. Defaults to False.
+#         scale (float, optional): Scaling factor for MH algorithm. Defaults to 0.3.
+#         parallel (bool, optional): Whether to run chains in parallel. Defaults to False.
+
+#     Returns:
+#         np.ndarray: Array of estimated parameter means.
+#     """
+
+#     estimates = np.empty((1, 0))
+#     chains = np.empty((0, 1, N - burn_in))
+#     post = np.empty((1, 0))
+#     posterior = JointDistribution(x, y)(y=observation)
+
+#     if parallel:
+#         logging.getLogger('tensorflow').setLevel(logging.ERROR)
+#         tf.get_logger().setLevel('ERROR')
+#         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
+#         futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
+#         results = ray.get(futures)
+#         ray.shutdown()
+#     else:
+#         results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
+
+#     for result in results:
+#         estimates = np.column_stack((estimates, result[0])) # non crea problemi per più parametri?
+#         chains = np.concatenate((chains, result[1]), axis=0)
+#         post = np.concatenate((post, result[2]), axis=1)
+
+#     for l in range(chains.shape[1]):
+#         plt.figure(figsize=(10, 4))
+#         for i in range(chains.shape[0]):
+#             plt.plot(chains[i, l, :])
+#         plt.xlabel('Sample')
+#         plt.ylabel('Value')
+#         plt.title(f'Trace Plot for variable {l}')
+#         plt.legend([f'Chain {i+1}' for i in range(chains.shape[0])])
+#         plt.show()
+
+#     if diagnostic:
+#         num_bins = 20
+#         plt.figure()
+#         for num in range(post.shape[0]):
+#             bin_edges = np.linspace(np.min(post[num, :]), np.max(post[num, :]), num_bins + 1)
+#             hist, _ = np.histogram(post[num, :], bins=bin_edges)
+#             hist = hist / post.shape[1]
+#             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+#             plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
+#             plt.xlabel('Value')
+#             plt.ylabel('Probability')
+#             plt.title('Distribution')
+#             plt.legend()
+#             plt.show()
+
+#         autocov = az.autocov(chains[:, 0, :])
+#         ess = az.ess(chains[:, 0, :])
+#         print(f"ESS values = {ess}")
+#         plt.figure()
+#         plt.plot(autocov[0, :])
+#         plt.title('Autocovariance first chain')
+#         plt.xlabel('Lag')
+#         plt.ylabel('Autocovariance')
+#         plt.legend()
+#         plt.show()
+
+
+#     # mean=az.summary(idata)['mean']
+#     # estimates = np.array(mean)
+#     # print(f"Estimated values are {estimates}")
+
+#     # if diagnostic:
+
+#     #     print(az.summary(idata))
+
+#     #     az.plot_trace(idata)
+#     #     print("----  Autocorrelation  ----")
+#     #     az.plot_autocorr(idata)
+#     #     print("----  Effective Sample Size  ----")
+#     #     az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
+#     #     print("----  Effective Sample Size per iteration  ----")        
+#     #     az.plot_ess(idata,kind='local')        
+#     #     # print("----  Pair Plots  ----")
+#     #     # az.plot_pair(idata)
+#     #     print("----  Rank Plots  ----")
+#     #     az.plot_rank(idata)
+
+
+
+#     return estimates
