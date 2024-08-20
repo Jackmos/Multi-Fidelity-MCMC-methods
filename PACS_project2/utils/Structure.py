@@ -1,44 +1,29 @@
-import sys
-import os
-import numpy as np
-from numpy import newaxis as _
 import copy
-import pickle
-import time
-from pprint import pprint
-from numba import njit, jit
-
-from keras.models import load_model
-from typing import Callable, Tuple, Any, List, Optional, Union, Dict
-from contextlib import contextmanager
-from module_utils import *
-from abc import ABC, abstractmethod
-from functools import wraps
-from enum import Enum
-from sklearn.model_selection import KFold
-from joblib import Parallel, delayed
-import concurrent.futures
-from keras.optimizers import Adam, Nadam, Adamax, RMSprop
-from scipy.stats import multivariate_normal
-from Helpers import *
-from BIP_functions import *
-from cuqi.distribution import Uniform, Gaussian,JointDistribution
-from cuqi.sampler import MH
-from cuqi.model import Model as CuqiModel
-from cuqi.geometry import Continuous1D, Continuous2D, Discrete
-import re
-import tinyDA as tda
-import optuna
-from keras.src.callbacks.tensorboard import TensorBoard
-import dask
-from dask.distributed import Client
-import multiprocessing
-import joblib
-from joblib import parallel_backend
 import gc
-
-############################
 import logging
+import optuna
+import os
+import re
+
+import numpy as np
+from numpy import newaxis as _   # easier reading
+from pprint import pprint
+from scipy.stats import multivariate_normal
+from sklearn.model_selection import KFold
+
+from abc import ABC, abstractmethod
+from cuqi.distribution import Gaussian, JointDistribution, Uniform
+from cuqi.model import Model as CuqiModel
+from cuqi.sampler import MH
+from keras.models import load_model
+from keras.src.callbacks.tensorboard import TensorBoard
+from numba import njit
+import tinyDA as tda
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+from BIP_functions import *
+from Helpers import *
+from module_utils import *
 
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -56,172 +41,6 @@ physical_devices = tf.config.list_physical_devices('GPU')
 if physical_devices:
     for gpu in physical_devices:
         tf.config.experimental.set_memory_growth(gpu, True)
-
-
-
-def check_observation_shape(y_obs: np.ndarray) -> Tuple[Optional[int], Optional[Any]]:
-    """
-    Check the dimensionality of the observation array and set geometry accordingly.
-
-    Parameters:
-    - y_obs: np.ndarray, the observation data
-
-    Returns:
-    - dim_obs: int or None, the dimensionality of the observation data (1D or 2D)
-    - range_geometry: object or None, the corresponding geometry object for the observation data.
-    """
-    if len(y_obs.shape) == 1 or y_obs.shape[1] == 1:
-        dim_obs = 1
-        range_geometry = Continuous1D(y_obs.shape[0])
-    elif y_obs.shape[1] == 2:
-        dim_obs = 2
-        range_geometry = Continuous2D(y_obs.shape[0])
-    else:
-        warnings.warn("Impossible for Cuqipy to manage a problem with 3 or more equations", UserWarning)
-        return None, None
-    return dim_obs, range_geometry
-
-
-def initialize_model(forward_fn: Any, algo: str, range_geometry: Any, m: int) -> Any:
-    """
-    Initialize the CuqiModel based on the selected algorithm.
-
-    Parameters:
-    - forward_fn: function, the forward prediction function
-    - algo: str, the selected MCMC algorithm ("MH" or "NUTS")
-    - range_geometry: object, geometry describing the range of the model
-    - m: int, the number of parameters to estimate
-
-    Returns:
-    - CuqiModel, the initialized CuqiModel object for the specified algorithm.
-    """
-    if algo == "NUTS":
-        fun = Function(forward_fn)
-        return CuqiModel(forward=forward_fn, jacobian=fun.compute_jacobian, 
-                         range_geometry=range_geometry, domain_geometry=Discrete(m))
-    else:
-        return CuqiModel(forward=forward_fn, range_geometry=range_geometry, 
-                         domain_geometry=Discrete(m))
-
-@njit
-def concatenate_inputs(inputs: np.ndarray, x_final: np.ndarray) -> np.ndarray:
-    """
-    Concatenate inputs and final processed data depending on dimensionality.
-
-    Parameters:
-    - inputs: np.ndarray, the initial input data (n, 1) or other shapes
-    - x_final: np.ndarray, the final processed data to be concatenated with inputs
-    
-    Returns:
-    - np.ndarray, concatenated input data after processing
-    """
-    # Handle different dimensionalities of the processed `x_final` data.
-    if x_final.ndim == 2:
-        # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
-        concatenated_input = np.concatenate((inputs, x_final), axis=1)
-
-    elif x_final.ndim == 3:
-        # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
-        inputs_expanded = np.expand_dims(inputs, axis=0)  
-        concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
-
-    else:
-        # Raise an error if `x_final` has an unsupported number of dimensions.
-        raise ValueError("Unsupported number of dimensions for x_final")
-    
-    return concatenated_input
-
-@njit
-def relative_error(estimates: np.ndarray, x_real: np.ndarray) -> np.ndarray:
-    """
-    Compute the relative error between estimated values and true values.
-
-    Parameters:
-    - estimates: np.ndarray, the estimated parameter values
-    - x_real: np.ndarray, the true parameter values for comparison
-    
-    Returns:
-    - np.ndarray, the relative error between estimates and true values.
-    """
-    return np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
-
-@njit
-def calculate_metrics(output_test: np.ndarray, pred: np.ndarray) -> Tuple[float, float]:
-    """
-    Calculate the Mean Squared Error (MSE) and R^2 score between the test data and predictions.
-
-    Parameters:
-    - output_test: np.ndarray, true output data
-    - pred: np.ndarray, predicted output data
-    
-    Returns:
-    - test_mse: float, Mean Squared Error between test and predicted outputs
-    - r2: float, R^2 score indicating the proportion of variance explained by the model
-    """
-    test_mse = np.mean(np.square(output_test - pred))
-    r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
-    return test_mse, r2
-
-@jit
-def apply_noise(y_obs: np.ndarray, cov_noise: float) -> np.ndarray:
-    """
-    Add noise to the observation data based on a specified covariance.
-
-    Parameters:
-    - y_obs: np.ndarray, the original observation data
-    - cov_noise: float, the standard deviation of the noise to be added
-    
-    Returns:
-    - np.ndarray, the perturbed observation data with added noise.
-    """
-    return y_obs + np.random.normal(loc=0.0, scale=cov_noise, size=y_obs.shape)
-
-
-def setup_prior(mean_prior: np.ndarray, cov_prior: Optional[np.ndarray]) -> multivariate_normal:
-    """
-    Set up the prior distribution for Bayesian inference.
-
-    Parameters:
-    - mean_prior: np.ndarray, the mean vector for the prior distribution
-    - cov_prior: Optional[np.ndarray], covariance matrix for the prior. If None, a default is used.
-    
-    Returns:
-    - multivariate_normal, a multivariate normal distribution representing the prior.
-    """
-    if cov_prior is None:
-        cov_prior = np.eye(len(mean_prior)) * 0.2  # Scale covariance
-    return multivariate_normal(mean_prior, cov_prior)
-
-def setup_likelihood(y_obs: np.ndarray, cov_likelihood: Optional[np.ndarray], cov_noise: float, dim: int) -> Any:
-    """
-    Set up the likelihood function for Bayesian inference.
-
-    Parameters:
-    - y_obs: np.ndarray, observed data
-    - cov_likelihood: Optional[np.ndarray], covariance matrix for the likelihood. If None, a default is used.
-    - cov_noise: float, standard deviation of the observation noise
-    - dim: int, dimensionality of the observation data
-    
-    Returns:
-    - tda.GaussianLogLike, the Gaussian likelihood function for the Bayesian model.
-    """
-    if cov_likelihood is None:
-        cov_likelihood = cov_noise ** 2 * np.eye(dim)
-    return tda.GaussianLogLike(y_obs, cov_likelihood)
-
-def simulate_observations(x_real: np.ndarray, cov_noise: float, model_wrapper: Any) -> np.ndarray:
-    """
-    Simulate noisy observations using a given model wrapper.
-
-    Parameters:
-    - x_real: np.ndarray, the true parameter values
-    - cov_noise: float, standard deviation of the noise to add to observations
-    - model_wrapper: Any, a function or object that generates predictions based on the true parameters
-    
-    Returns:
-    - np.ndarray, simulated observation data with added noise.
-    """
-    return model_wrapper(x_real) + np.random.normal(loc=0.0, scale=cov_noise, size=x_real.shape)
 
 
 # Define the types of networks as an enumeration for type safety and clarity.
@@ -615,7 +434,7 @@ class INetwork(ABC):
             self._plot_diagnostics(estimates, x_real, max_par)
         
         # Compute the relative error between estimates and x_real
-        error = relative_error(estimates, x_real)
+        error = np.mean(relative_error(estimates, x_real))
         
         return estimates, error, param_results
     
@@ -752,12 +571,14 @@ class INetwork(ABC):
         return test_mse, r2
 
 
-    @staticmethod
     def summary(self) -> None:
         """
         Prints the summary of the model architecture.
         """
         self.model.summary()
+        # free memory after summary
+        gc.collect()
+
 
     @staticmethod
     def save(self, file_path: str) -> None: 
@@ -775,7 +596,7 @@ class INetwork(ABC):
         Args: 
             file_path (str): The path from where the model will be loaded. 
         """ 
-        self.model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
+        self.model = load_model(file_path, custom_objects={'sinusoidal_activation':sinusoidal_activation,'FourierLayer': FourierLayer, 'custom_activation':custom_activation}) 
         self.input_shape=self.model.inputs[0][-1]
         self._output_shape=self.model.outputs[0][-1]
 
@@ -877,7 +698,8 @@ class Neural_Network(INetwork):
             pprint(self._params)
 
         # Initialize the model with the given or optimized parameters
-        self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
+        if self._params is not None:
+            self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
 
         # Train the model if required and if no HPO was performed
         if train and output_train is not None:
@@ -1519,7 +1341,8 @@ class LSTM_network(INetwork):
             warnings.warn("Params field is empty!", UserWarning)
         
         # Initialize the model
-        self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
+        if self._params is not None:
+            self.model = getModel(self._params, self.input_shape, self.name, self.output_shape)
 
         # Train the model if training is enabled
         if train and output_train is not None:

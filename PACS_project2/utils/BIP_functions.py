@@ -1,19 +1,20 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import arviz as az
-from typing import Any, Tuple, List, Union
-import ray
-import os
 import logging
+import numpy as np
+import os
+import ray
 import tensorflow as tf
-from tinyDA import get_MAP, GaussianRandomWalk, AdaptiveMetropolis, CrankNicolson, DREAMZ, MLDA, sample, to_inference_data
 import tinyDA as tda
+import uuid
+import warnings
+
 from cuqi.distribution import JointDistribution
 from cuqi.sampler import MH, NUTS, pCN
 from datetime import datetime
-import uuid
-import warnings
+from matplotlib import pyplot as plt
 from numba import njit
+from tinyDA import AdaptiveMetropolis, CrankNicolson, DREAMZ, GaussianRandomWalk, get_MAP, sample, to_inference_data
+from typing import Any, List, Tuple, Union
 
 # Suppress specific UserWarnings and RuntimeWarnings
 warnings.filterwarnings("ignore", category=UserWarning, message="qoi group is not defined in the InferenceData scheme")

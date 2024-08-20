@@ -1,238 +1,13 @@
-import tensorflow.keras.backend as K
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Input, concatenate
-from tensorflow.keras.optimizers import Adam,Nadam,Adamax
-import tensorflow as tf
-import arviz
-import logging
-from concurrent.futures import ProcessPoolExecutor
-
-from hyperopt import STATUS_OK, tpe, Trials, hp, fmin
-from hyperopt.pyll.stochastic import sample
-from hyperopt.pyll.base import scope
-from sklearn.model_selection import KFold
 import numpy as np
-from matplotlib import pyplot as plt
-from time import perf_counter
-import sys
-import os
-import warnings
-import ray
+import tensorflow as tf
+from tensorflow.keras import backend as K
+from tensorflow.keras.layers import Dense, Input, concatenate
+from tensorflow.keras.models import Model
+from tensorflow.keras.regularizers import l2
+from bayes_opt import BayesianOptimization
+
+from typing import List, Tuple, Union, Dict
 from numba import njit
-
-from scipy.stats import multivariate_normal,beta
-import arviz as az
-import time 
-
-from itertools import product
-from typing import List, Tuple, Union
-
-# import numpy as np
-# from joblib import Parallel, delayed, Memory
-# from typing import List, Tuple
-
-# def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
-#     """
-#     Calculate the covariance matrix for the likelihood.
-
-#     Parameters:
-#     - sigma: Standard deviation for the likelihood.
-#     - t_eval: 2D numpy array of evaluation times.
-
-#     Returns:
-#     - cov_likelihood: 2D numpy array representing the covariance matrix.
-#     """
-#     # Assuming a Gaussian process covariance matrix as an example
-#     cov_likelihood = np.exp(-0.5 * (t_eval - t_eval.T)**2 / sigma**2)
-#     return cov_likelihood
-
-# def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray, Yhf: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-#     """
-#     Find the elements of a dataset nearest to the ones given.
-    
-#     Parameters:
-#     - datahf: 2D numpy array where datahf[:,1] contains parameter values.
-#     - parameters: 1D numpy array of parameter values to find in datahf.
-#     - t_eval: 2D numpy array of evaluation times.
-#     - Yhf: 1D numpy array of corresponding y values.
-    
-#     Returns:
-#     - nearest_x: 1D numpy array of x values closest to each t_eval.
-#     - y_obs: 1D numpy array of corresponding y values from Yhf.
-#     """
-#     # Find indices of datahf where the parameter matches the target parameter
-#     indices = np.where(datahf[:, 1] == parameters[0])[0]
-#     if len(indices) == 0:
-#         raise ValueError(f"No observations related to parameter: {parameters[0]}")
-    
-#     # Extract relevant data and compute differences to t_eval
-#     datahf_values = datahf[indices, 0].reshape(-1, 1)
-#     differences = np.abs(datahf_values - t_eval.reshape(1, -1))
-    
-#     # Find the index of the closest data points
-#     closest_indices = np.argmin(differences, axis=0)
-#     nearest_x = datahf[indices[closest_indices], 0]
-#     y_obs = Yhf[indices[closest_indices]]
-    
-#     return nearest_x, y_obs
-
-# def run_single_simulation(
-#     i: int, 
-#     k: int, 
-#     t: int, 
-#     j: int, 
-#     noise: float, 
-#     n: int, 
-#     s: float, 
-#     r: float, 
-#     datahf: np.ndarray, 
-#     parameters: np.ndarray, 
-#     Yhf: np.ndarray, 
-#     mean_prior: np.ndarray, 
-#     cov_prior: np.ndarray, 
-#     rwmh_cov: np.ndarray, 
-#     rwmh_adaptive: bool, 
-#     iterations: int, 
-#     burnin: int, 
-#     n_chains: int, 
-#     final_model, 
-#     algo: str, 
-#     levels: int, 
-#     force_sequential: bool
-# ) -> Tuple[np.ndarray, float, np.ndarray, int, int, int, int]:
-#     """
-#     Run a single simulation for a specific combination of parameters.
-
-#     Parameters:
-#     - i, k, t, j: Indices of the parameters in the product loop.
-#     - noise: Noise level.
-#     - n: Number of data points.
-#     - s: Standard deviation for the likelihood.
-#     - r: Scaling factor for the RWMH algorithm.
-#     - datahf: 2D numpy array containing data.
-#     - parameters: 1D numpy array of parameters.
-#     - Yhf: 1D numpy array of observed values.
-#     - mean_prior: 1D numpy array for the mean of the prior.
-#     - cov_prior: 2D numpy array for the covariance of the prior.
-#     - rwmh_cov: 2D numpy array for the RWMH covariance.
-#     - rwmh_adaptive: Boolean indicating if RWMH is adaptive.
-#     - iterations: Integer for the number of iterations.
-#     - burnin: Integer for the burn-in period.
-#     - n_chains: Integer for the number of chains.
-#     - final_model: The model object with the param_inverse method.
-#     - algo: String indicating the algorithm to use.
-#     - levels: Number of levels for ML MCMC approach.
-#     - force_sequential: If True, imposes a sequential approach to the MCMC algorithm.
-
-#     Returns:
-#     - est: The estimated parameters.
-#     - err: The error corresponding to the estimate.
-#     - param_res: Additional parameter results.
-#     - i, k, t, j: Indices of the parameters in the product loop for identification.
-#     """
-    
-#     # Generate evaluation times
-#     t_eval = np.linspace(np.min(datahf[:, 0]), np.max(datahf[:, 0]), n).reshape(-1, 1)
-    
-#     # Get nearest x values and corresponding observations
-#     _, y_obs = process_data(datahf, parameters, t_eval, Yhf)
-    
-#     # Compute the covariance matrix for the likelihood
-#     cov_likelihood = calculate_cov_likelihood(s, t_eval)
-    
-#     # Perform parameter estimation and calculate error
-#     est, err, param_res = final_model.param_inverse(
-#         mean_prior, t_eval, max_par=max(datahf[:, 1]), cov_prior=cov_prior, rmwh_scaling=r, 
-#         levels=levels, cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-#         x_real=parameters, number_chains=n_chains, N=iterations, 
-#         burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-#         rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential
-#     )
-    
-#     return est, err, param_res, i, k, t, j
-
-# def run_simulation(
-#     datahf: np.ndarray, 
-#     mean_prior: np.ndarray, 
-#     cov_prior: np.ndarray, 
-#     Yhf: np.ndarray, 
-#     sigma_noise: List[float], 
-#     n_data: List[int],
-#     parameters: np.ndarray, 
-#     sigma: np.ndarray, 
-#     rwmh_scaling: np.ndarray, 
-#     rwmh_cov: np.ndarray, 
-#     rwmh_adaptive: bool, 
-#     iterations: int, 
-#     burnin: int, 
-#     n_chains: int, 
-#     final_model, 
-#     algo: str, 
-#     levels: int = 1,
-#     #force_sequential: bool = False
-# ) -> Tuple[np.ndarray, float, List[dict]]:
-#     """
-#     Run a simulation to estimate parameters and calculate errors.
-    
-#     Returns:
-#     - best_estimate: The best parameter estimate.
-#     - best_error: The error corresponding to the best estimate.
-#     - param_results: List of dictionaries containing parameter results and their associated parameters.
-#     """
-    
-#     # Initialize the shape of the error array
-#     error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
-    
-#     # Run simulations in parallel for all parameter combinations
-#     results = Parallel(n_jobs=-1)(
-#         delayed(run_single_simulation)(
-#             i, k, t, j, noise, n, s, r, datahf, parameters, Yhf, 
-#             mean_prior, cov_prior, rwmh_cov, rwmh_adaptive, iterations, 
-#             burnin, n_chains, final_model, algo, levels, True
-#         )
-#         for (i, noise), (k, n), (t, s), (j, r) in product(
-#             enumerate(sigma_noise), enumerate(n_data), 
-#             enumerate(sigma), enumerate(rwmh_scaling)
-#         )
-#     )
-    
-#     # Unpack results
-#     estimates, errors, param_results = [], [], []
-#     structured_results = []  # To hold structured results for each simulation
-    
-#     for est, err, param_res, i, k, t, j in results:
-#         estimates.append(est)
-#         errors.append(err)
-#         param_results.append(param_res)
-        
-#         # Store structured results including parameter values
-#         structured_results.append({
-#             'estimate': est,
-#             'error': err,
-#             'parameters': {
-#                 'sigma_noise': sigma_noise[i],
-#                 'n_data': n_data[k],
-#                 'sigma': sigma[t],
-#                 'rwmh_scaling': rwmh_scaling[j]
-#             },
-#             'param_results': param_res
-#         })
-    
-#     # Reshape errors to match the parameter grid
-#     errors = np.array(errors).reshape(error_shape)
-    
-#     # Identify the index of the minimum error
-#     smallest_index = np.unravel_index(np.argmin(errors), errors.shape)
-#     best_estimate = estimates[smallest_index[0]]
-#     best_error = errors[smallest_index]
-    
-#     # Print the best parameters
-#     print(f"The best estimate is given by: sigma_noise={sigma_noise[smallest_index[0]]}, "
-#           f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
-#           f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
-
-#     return best_estimate, best_error, structured_results
 
 
 
@@ -278,294 +53,423 @@ def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
     """
     return sigma ** 2 * np.eye(t_eval.shape[0])
 
-def run_simulation(
+
+def HPO_tinyDA(
     datahf: np.ndarray, 
     mean_prior: np.ndarray, 
     cov_prior: np.ndarray, 
     Yhf: np.ndarray, 
-    sigma_noise: List[float], 
-    n_data: List[int],
     parameters: np.ndarray, 
-    sigma: np.ndarray, 
-    rwmh_scaling: np.ndarray, 
     rwmh_cov: np.ndarray, 
     rwmh_adaptive: bool, 
     iterations: int, 
     burnin: int, 
     n_chains: int, 
-    final_model,
+    final_model,  # The model class instance with a method 'param_inverse'
     algo: str, 
-    subsampling_rate: Union[int, List[int]] = 1,
-    levels:int=1,
-    force_sequential:bool=False
-) -> Tuple[np.ndarray, np.ndarray]:
+    levels: int, 
+    force_sequential: bool,
+    domain:Tuple[float,float],
+    sigma_noise_bounds: Tuple[float, float],  # Bounds for sigma_noise as a tuple (min, max)
+    n_data_bounds: Tuple[int, int],           # Bounds for n_data as a tuple (min, max)
+    sigma_bounds: Tuple[float, float],        # Bounds for sigma as a tuple (min, max)
+    rwmh_scaling_bounds: Tuple[float, float]  # Bounds for rwmh_scaling as a tuple (min, max)
+) -> Tuple[float, int, float, float]:
     """
-    Run a simulation to estimate parameters and calculate errors.
-    
-    Parameters:
-    - datahf: 2D numpy array containing data.
-    - mean_prior: 1D numpy array for the mean of the prior.
-    - cov_prior: 2D numpy array for the covariance of the prior.
-    - Yhf: 1D numpy array of observed values.
-    - sigma_noise: List of noise levels.
-    - n_data: List of number of data points.
-    - parameters: 1D numpy array of parameters.
-    - sigma: 1D numpy array of standard deviations for the likelihood.
-    - rwmh_scaling: 1D numpy array of scaling factors for the RWMH algorithm.
-    - rwmh_cov: 2D numpy array for the RWMH covariance.
-    - rwmh_adaptive: Boolean indicating if RWMH is adaptive.
-    - iterations: Integer for the number of iterations.
-    - burnin: Integer for the burn-in period.
-    - n_chains: Integer for the number of chains.
-    - final_model: The model object with the param_inverse method.
-    - subsampling_rate (Union[int, List[int]]): Rate or rates of subsampling the posterior. Default is 1.
-    - algo: String indicating the algorithm to use.
-    - levels: number of levels to implement a ML MCMC approach. Valid only for Multifidelity networks to exploit different accuracy discretization levels
-    - force_sequential: if True impose a sequential approach to the MCMC algorithm
-
-    Returns:
-    - best_estimate: The best parameter estimate.
-    - best_error: The error corresponding to the best estimate.
-    """
-    
-    # Initialize error and estimate arrays
-    error_shape = (len(sigma_noise), len(n_data), len(sigma), len(rwmh_scaling))
-    error = []
-    estimates = []
-    param_results = []
-
-    # Iterate over all combinations of parameters using itertools.product
-    for (i, noise), (k, n), (t, s), (j, r) in product(enumerate(sigma_noise), enumerate(n_data), enumerate(sigma), enumerate(rwmh_scaling)):
-        t_eval = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), n).reshape(-1, 1)  # Generate evaluation times
-        nearest_x, y_obs = process_data(datahf, parameters, t_eval, Yhf)  # Get nearest x values and observations
-        cov_likelihood = calculate_cov_likelihood(s, t_eval)  # Compute the covariance for the likelihood
-
-        # Perform parameter estimation and calculate error
-        est, err, param_res = final_model.param_inverse(
-            mean_prior, t_eval, max_par=max(datahf[:,1]),cov_prior=cov_prior, rmwh_scaling=r, levels=levels,
-            cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-            x_real=parameters, number_chains=n_chains, N=iterations, 
-            burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-            rwmh_adaptive=rwmh_adaptive, subsampling_rate=subsampling_rate, algo=algo, force_sequential=force_sequential
-        )
-        estimates.append(est)
-        error.append(err)
-        param_results.append(param_res)
-    # Identify the index of the minimum error
-    smallest_index = np.unravel_index(np.argmin(error), error.shape)
-    best_estimate = estimates[smallest_index]
-    best_error = error[smallest_index]
-    
-    # Print the best parameters
-    print(f"The best estimate is given by: sigma_noise={sigma_noise[smallest_index[0]]}, "
-          f"number of data={n_data[smallest_index[1]]}, sigma={sigma[smallest_index[2]]}, "
-          f"rwmh_scaling={rwmh_scaling[smallest_index[3]]}")
-
-    return best_estimate, best_error, param_results
-
-# def single_simulation(
-#     noise: float, n: int, s: float, r: float, datahf: np.ndarray, parameters: np.ndarray, 
-#     Yhf: np.ndarray, mean_prior: np.ndarray, cov_prior: np.ndarray, rwmh_scaling: np.ndarray, 
-#     rwmh_cov: np.ndarray, rwmh_adaptive: bool, iterations: int, burnin: int, n_chains: int, 
-#     final_model, algo: str, levels: int, force_sequential: bool
-# ) -> Tuple[np.ndarray, float, np.ndarray]:
-#     """
-#     Execute a single simulation for a given set of hyperparameters.
-
-#     Parameters:
-#     - noise: Noise level for the covariance.
-#     - n: Number of data points.
-#     - s: Standard deviation for the likelihood.
-#     - r: Scaling factor for the RWMH algorithm.
-#     - Other parameters are shared with the main function.
-
-#     Returns:
-#     - est: Estimated parameters.
-#     - err: Error corresponding to the estimate.
-#     - param_res: Results of the parameter estimation.
-#     """
-#     t_eval = np.linspace(0., 5., n).reshape(-1, 1)
-#     _, y_obs = process_data(datahf, parameters, t_eval, Yhf)
-#     cov_likelihood = calculate_cov_likelihood(s, t_eval)
-
-#     est, err, param_res = final_model.param_inverse(
-#         mean_prior, t_eval, max_par=max(datahf[:, 1]), cov_prior=cov_prior, rmwh_scaling=r, 
-#         levels=levels, cov_noise=noise, cov_likelihood=cov_likelihood, y_obs=y_obs, 
-#         x_real=parameters, number_chains=n_chains, N=iterations, 
-#         burn_in=burnin, diagnostic=True, rwmh_cov=rwmh_cov, 
-#         rwmh_adaptive=rwmh_adaptive, algo=algo, force_sequential=force_sequential
-#     )
-#     return est, err, param_res
-
-
-# def run_simulation(
-#     datahf: np.ndarray, 
-#     mean_prior: np.ndarray, 
-#     cov_prior: np.ndarray, 
-#     Yhf: np.ndarray, 
-#     sigma_noise: List[float], 
-#     n_data: List[int],
-#     parameters: np.ndarray, 
-#     sigma: np.ndarray, 
-#     rwmh_scaling: np.ndarray, 
-#     rwmh_cov: np.ndarray, 
-#     rwmh_adaptive: bool, 
-#     iterations: int, 
-#     burnin: int, 
-#     n_chains: int, 
-#     final_model, 
-#     algo: str, 
-#     levels: int = 1,
-#     force_sequential: bool = False,
-#     max_workers: int = 2  # Limit the number of external processes
-# ) -> Tuple[np.ndarray, np.ndarray, list]:
-#     """
-#     Run a simulation to estimate parameters and calculate errors.
-
-#     Parameters:
-#     - datahf: 2D numpy array containing data.
-#     - mean_prior: 1D numpy array for the mean of the prior.
-#     - cov_prior: 2D numpy array for the covariance of the prior.
-#     - Yhf: 1D numpy array of observed values.
-#     - sigma_noise: List of noise levels.
-#     - n_data: List of number of data points.
-#     - parameters: 1D numpy array of parameters.
-#     - sigma: 1D numpy array of standard deviations for the likelihood.
-#     - rwmh_scaling: 1D numpy array of scaling factors for the RWMH algorithm.
-#     - rwmh_cov: 2D numpy array for the RWMH covariance.
-#     - rwmh_adaptive: Boolean indicating if RWMH is adaptive.
-#     - iterations: Integer for the number of iterations.
-#     - burnin: Integer for the burn-in period.
-#     - n_chains: Integer for the number of chains.
-#     - final_model: The model object with the param_inverse method.
-#     - algo: String indicating the algorithm to use.
-#     - levels: Number of levels for ML MCMC in multifidelity networks.
-#     - force_sequential: If True, force sequential MCMC execution.
-#     - max_workers: Maximum number of processes to use for parallelization.
-
-#     Returns:
-#     - best_estimate: The best parameter estimate.
-#     - best_error: The error corresponding to the best estimate.
-#     - param_results: A list of all parameter estimation results.
-#     """
-    
-#     # Define the combinations of hyperparameters to explore
-#     combinations = list(product(sigma_noise, n_data, sigma, rwmh_scaling))
-    
-#     # Parallel execution with a limited number of workers
-#     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-#         results = list(executor.map(
-#             lambda combo: single_simulation(*combo, datahf, parameters, Yhf, 
-#                                             mean_prior, cov_prior, rwmh_scaling, 
-#                                             rwmh_cov, rwmh_adaptive, iterations, 
-#                                             burnin, n_chains, final_model, algo, 
-#                                             levels, force_sequential), 
-#             combinations
-#         ))
-
-#     # Unpacking results
-#     estimates, error, param_results = zip(*results)
-
-#     # Identify the index of the minimum error
-#     smallest_index = np.argmin(error)
-#     best_estimate = estimates[smallest_index]
-#     best_error = error[smallest_index]
-
-#     # Extract the best hyperparameter combination
-#     best_params = combinations[smallest_index]
-#     print(f"The best estimate is given by: sigma_noise={best_params[0]}, "
-#           f"number of data={best_params[1]}, sigma={best_params[2]}, "
-#           f"rwmh_scaling={best_params[3]}")
-
-#     return best_estimate, best_error, param_results
-
-def run_simulation_cuqi(
-    data: dict,
-    mean_prior: np.ndarray,
-    x_real: np.ndarray,
-    N: int,
-    burn_in: int,
-    cov_prior: np.ndarray,
-    sd_noise: list,
-    adapt: bool,
-    proposal_sd: list,
-    number_chains: int,
-    algo: str,
-    x_data: np.ndarray,
-    n_data: list,
-    final_model,
-    parallel: bool
-) -> tuple:
-    """
-    Run a CUQI simulation to estimate parameters and compute error.
+    Perform hyperparameter optimization using Bayesian Optimization to minimize the error
+    in the param_inverse method of the given final_model.
 
     Args:
-        data (dict): Dictionary containing high-fidelity data (keys: "xhf" and "Yhf").
+        datahf (np.ndarray): High-fidelity data array.
         mean_prior (np.ndarray): Prior mean vector.
-        x_real (np.ndarray): Real x values.
-        N (int): Number of samples.
-        burn_in (int): Number of burn-in samples.
         cov_prior (np.ndarray): Prior covariance matrix.
-        sd_noise (list): List of noise standard deviations to evaluate.
-        adapt (bool): Whether to use adaptation in the algorithm.
-        proposal_sd (list): List of proposal standard deviations to evaluate.
-        number_chains (int): Number of MCMC chains.
-        algo (str): Algorithm to use for MCMC.
-        x_data (np.ndarray): Initial evaluation times.
-        n_data (list): List of data sizes to evaluate.
-        final_model: Final model object with inverse_cuqi method.
-        parallel (bool): Whether to run MCMC chains in parallel.
+        Yhf (np.ndarray): High-fidelity observations.
+        parameters (np.ndarray): Real parameter values for comparison.
+        rwmh_cov (np.ndarray): Covariance matrix for the RWMH proposal distribution.
+        rwmh_adaptive (bool): Flag to enable adaptive RWMH.
+        iterations (int): Number of iterations for the RWMH algorithm.
+        burnin (int): Number of burn-in iterations for the RWMH algorithm.
+        n_chains (int): Number of MCMC chains.
+        final_model: The model object with a method `param_inverse`.
+        algo (str): Algorithm type for the optimization.
+        levels (int): Number of levels in the model.
+        force_sequential (bool): Flag to enforce sequential processing.
+        domain (Tuple[float, float]): domain of the considered problem
+        sigma_noise_bounds (Tuple[float, float]): Bounds for the sigma_noise hyperparameter.
+        n_data_bounds (Tuple[int, int]): Bounds for the n_data hyperparameter.
+        sigma_bounds (Tuple[float, float]): Bounds for the sigma hyperparameter.
+        rwmh_scaling_bounds (Tuple[float, float]): Bounds for the rwmh_scaling hyperparameter.
 
     Returns:
-        tuple: Best estimate and best error found during the simulation.
+        Tuple[float, int, float, float]: The optimal values for sigma_noise, n_data, sigma, and rwmh_scaling.
     """
-
-    # Initialize estimates and error arrays
-    estimates = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    error = np.zeros((len(sd_noise), len(n_data), len(proposal_sd)))
-    param_results = []
-
-    # Iterate over noise levels
-    for i, noise in enumerate(sd_noise):
-        # Iterate over number of data points
-        for k, n in enumerate(n_data):
-            # Generate evaluation times
-            x_data = np.linspace(0., 5., n).reshape(-1, 1)                          # CORREGGI 
-            nearest_x, y_obs = process_data(data["xhf"], x_real, x_data, data["Yhf"])
-            
-            # Iterate over proposal standard deviations
-            for t, s in enumerate(proposal_sd):
-
-                # Perform parameter estimation and calculate error
-                estimates[i, k, t], error[i, k, t], par = final_model.inverse_cuqi(
-                    mean_prior=mean_prior,
-                    x_real=x_real,
-                    max_par=max(data["xhf"][:,1]),
-                    y_obs=y_obs,
-                    N=N,
-                    burn_in=burn_in,
-                    cov_prior=cov_prior,
-                    sd_noise=noise,  
-                    adapt=adapt,
-                    scale=s,
-                    proposal_sd=s,
-                    number_chains=number_chains,
-                    algo=algo,
-                    x_data=x_data,
-                    parallel=parallel
-                )
-                
-                param_results.append(par)
-    # Find the smallest error and corresponding indices
-    smallest_index = np.unravel_index(np.argmin(error), error.shape)
-    best_estimate = estimates[smallest_index]
-    best_error = error[smallest_index]
     
-    # Print the best parameters
-    print(f"The best estimate is given by: sd_noise={sd_noise[smallest_index[0]]}, "
-          f"number of data={n_data[smallest_index[1]]}, proposal_standard_deviation={proposal_sd[smallest_index[2]]}")
+    def evaluate_model(sigma_noise: float, n_data: int, sigma: float, rwmh_scaling: float) -> float:
+        """
+        Objective function that runs the simulation and returns the negative error for minimization.
 
-    return best_estimate, best_error, param_results
+        Args:
+            sigma_noise (float): Noise standard deviation for the covariance noise matrix.
+            n_data (int): Number of data points to be used in the simulation.
+            sigma (float): Parameter used in the covariance likelihood calculation.
+            rwmh_scaling (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+
+        Returns:
+            float: The negative of the error to be minimized.
+        """
+        
+        # Running the model's parameter inversion method to compute the error
+        _, error, _ = final_model.param_inverse(
+            mean_prior=mean_prior, 
+            x_data=np.linspace(domain[0], domain[1], int(n_data)).reshape(-1, 1), 
+            max_par=max(datahf[:, 1]), 
+            cov_prior=cov_prior, 
+            cov_noise=sigma_noise,
+            cov_likelihood=calculate_cov_likelihood(sigma, np.linspace(0., 5., int(n_data)).reshape(-1, 1)),
+            y_obs=process_data(datahf, parameters, np.linspace(0., 5., int(n_data)).reshape(-1, 1), Yhf)[1],
+            x_real=parameters,
+            number_chains=n_chains,
+            N=iterations,
+            burn_in=burnin,
+            levels=levels, 
+            diagnostic=True, 
+            rwmh_cov=rwmh_cov, 
+            rmwh_scaling=rwmh_scaling,
+            rwmh_adaptive=rwmh_adaptive, 
+            algo=algo, 
+            force_sequential=force_sequential
+        )
+        
+        return -error  # Return the negative error for minimization
+
+    # Define parameter bounds for the Bayesian Optimization based on user input
+    pbounds = {
+        'sigma_noise': sigma_noise_bounds,  # Bounds for sigma_noise
+        'n_data': n_data_bounds,            # Bounds for n_data
+        'sigma': sigma_bounds,              # Bounds for sigma
+        'rwmh_scaling': rwmh_scaling_bounds # Bounds for rwmh_scaling
+    }
+
+    # Initialize the Bayesian Optimizer with the objective function and parameter bounds
+    optimizer = BayesianOptimization(
+        f=evaluate_model,
+        pbounds=pbounds,
+        random_state=42
+    )
+
+    # Run the optimization process
+    optimizer.maximize(init_points=5, n_iter=25)
+
+    # Retrieve the optimal parameter values
+    best_params = optimizer.max['params']
+
+    # Return the best parameters found
+    return best_params['sigma_noise'], int(best_params['n_data']), best_params['sigma'], best_params['rwmh_scaling']
+
+
+def run_param_inverse(
+    final_model, 
+    mean_prior: np.ndarray, 
+    datahf: np.ndarray, 
+    cov_prior: np.ndarray, 
+    Yhf: np.ndarray, 
+    parameters: np.ndarray, 
+    sigma_noise: float, 
+    n_data: int, 
+    sigma: float, 
+    rwmh_scaling: float, 
+    rwmh_cov: np.ndarray, 
+    rwmh_adaptive: bool, 
+    iterations: int, 
+    burnin: int, 
+    n_chains: int, 
+    levels: int, 
+    algo: str, 
+    force_sequential: bool,
+    domain:Tuple[float,float]
+
+) -> Tuple[np.ndarray, float, np.ndarray]:
+    """
+    Calls the `param_inverse` method of `final_model` with the given parameters.
+
+    Args:
+        final_model: The model object with a `param_inverse` method.
+        mean_prior (np.ndarray): Prior mean vector.
+        datahf (np.ndarray): High-fidelity data array.
+        cov_prior (np.ndarray): Prior covariance matrix.
+        Yhf (np.ndarray): High-fidelity observations.
+        parameters (np.ndarray): Real parameter values for comparison.
+        sigma_noise (float): Noise standard deviation for the covariance noise matrix.
+        n_data (int): Number of data points to be used in the simulation.
+        sigma (float): Parameter used in the covariance likelihood calculation.
+        rwmh_scaling (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+        rwmh_cov (np.ndarray): Covariance matrix for the RWMH proposal distribution.
+        rwmh_adaptive (bool): Flag to enable adaptive RWMH.
+        iterations (int): Number of iterations for the RWMH algorithm.
+        burnin (int): Number of burn-in iterations for the RWMH algorithm.
+        n_chains (int): Number of MCMC chains.
+        levels (int): Number of levels in the model.
+        algo (str): Algorithm type for the optimization.
+        force_sequential (bool): Flag to enforce sequential processing.
+        domain (Tuple[float, float]): domain of the considered problem
+
+    Returns:
+        Tuple[np.ndarray, float, np.ndarray]: The inferred parameters, error, and diagnostic data.
+    """
+    
+    # Prepare the observational data and other required inputs for the param_inverse call
+    x_obs = np.linspace(domain[0], domain[1], int(n_data)).reshape(-1, 1)
+    max_par = np.max(datahf[:, 1])
+    
+    # Calculate the covariance for the likelihood
+    cov_likelihood = calculate_cov_likelihood(sigma, x_obs)
+    
+    # Process the data to get y_obs
+    _, y_obs = process_data(datahf, parameters, x_obs, Yhf)
+    
+    # Call the `param_inverse` method from the `final_model`
+    inferred_parameters, error, diagnostics = final_model.param_inverse(
+        mean_prior=mean_prior,
+        x_data=x_obs,
+        max_par=max_par,
+        cov_prior=cov_prior,
+        cov_noise=sigma_noise,
+        cov_likelihood=cov_likelihood,
+        y_obs=y_obs,
+        x_real=parameters,
+        number_chains=n_chains,
+        N=iterations,
+        burn_in=burnin,
+        levels=levels,
+        diagnostic=True,
+        rwmh_cov=rwmh_cov,
+        rmwh_scaling=rwmh_scaling,
+        rwmh_adaptive=rwmh_adaptive,
+        algo=algo,
+        force_sequential=force_sequential
+    )
+    
+    # Return the inferred parameters, error, and diagnostics
+    return inferred_parameters, error, diagnostics
+
+
+
+
+def HPO_cuqi(
+    data: dict,
+    mean_prior: np.ndarray,
+    parameters: np.ndarray,
+    iterations: int,
+    burn_in: int,
+    cov_prior: np.ndarray,
+    sd_noise_bounds: Tuple[float, float],
+    proposal_sd_bounds: Tuple[float, float],
+    n_data_bounds: Tuple[int, int],
+    scale_bounds: Tuple[float, float],
+    adapt: bool,
+    number_chains: int,
+    algo: str,
+    fwd_model,
+    parallel: bool,
+    domain:Tuple[float,float],
+    init_points: int = 5,
+    n_iter: int = 25
+) -> Tuple[float, float, int, float, float, float]:
+    """
+    Run a CUQI simulation to estimate parameters and compute error using Bayesian Optimization.
+    
+    Parameters:
+    - data: Dictionary containing high-fidelity data (keys: "xhf" and "Yhf").
+    - mean_prior: 1D numpy array for the mean of the prior.
+    - parameters: 1D numpy array of parameter values.
+    - iterations: Integer for the number of iterations (samples).
+    - burn_in: Integer for the number of burn-in samples.
+    - cov_prior: 2D numpy array for the covariance of the prior.
+    - sd_noise_bounds: Tuple of (min, max) bounds for noise standard deviation.
+    - proposal_sd_bounds: Tuple of (min, max) bounds for proposal standard deviation.
+    - n_data_bounds: Tuple of (min, max) bounds for the number of data points.
+    - scale_bounds: Tuple of (min, max) bounds for the scaling factor.
+    - adapt: Boolean indicating whether to use adaptation in the algorithm.
+    - number_chains: Integer for the number of MCMC chains.
+    - algo: String indicating the algorithm to use for MCMC.
+    - fwd_model: Forward model object with the inverse_cuqi method.
+    - parallel: Boolean indicating whether to run MCMC chains in parallel.
+    - init_points: Number of initial random points for Bayesian Optimization.
+    - n_iter: Number of iterations for the optimization process.
+    - domain (Tuple[float, float]): domain of the considered problem
+
+    Returns:
+    - Best parameters found through Bayesian Optimization: (best_estimate, best_error, best_sd_noise, best_proposal_sd, best_n_data, best_scale).
+    """
+    
+    def evaluate_model(sd_noise: float, proposal_sd: float, n_data: int, scale: float) -> float:
+        """
+        Objective function that runs the simulation and returns the negative error for minimization.
+        
+        Args:
+            sd_noise (float): Noise standard deviation for the covariance noise matrix.
+            proposal_sd (float): Proposal standard deviation for the MCMC algorithm.
+            n_data (int): Number of data points to be used in the simulation.
+            scale (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+            
+        Returns:
+            float: The negative of the error to be minimized.
+        """
+        
+        # Generate evaluation points in the input domain based on the number of data points
+        x_data = np.linspace(domain[0], domain[1], int(n_data)).reshape(-1, 1)
+        _, y_obs = process_data(data["xhf"], parameters, x_data, data["Yhf"])
+
+        # Perform parameter estimation and calculate the error
+        _, error, _ = fwd_model.inverse_cuqi(
+            mean_prior=mean_prior,
+            x_real=parameters,
+            max_par=max(data["xhf"][:,1]),
+            y_obs=y_obs,
+            N=iterations,
+            burn_in=burn_in,
+            cov_prior=cov_prior,
+            sd_noise=sd_noise,
+            adapt=adapt,
+            scale=scale,
+            proposal_sd=proposal_sd,
+            number_chains=number_chains,
+            algo=algo,
+            x_data=x_data,
+            parallel=parallel
+        )
+        
+        return -error  # Returning negative error for minimization by Bayesian Optimization
+
+    # Define the bounds for each parameter in the optimization process
+    pbounds = {
+        'sd_noise': sd_noise_bounds,
+        'proposal_sd': proposal_sd_bounds,
+        'n_data': (n_data_bounds[0], n_data_bounds[1]),
+        'scale': scale_bounds
+    }
+
+    # Initialize Bayesian Optimizer with the objective function and bounds
+    optimizer = BayesianOptimization(
+        f=evaluate_model,
+        pbounds=pbounds,
+        random_state=42
+    )
+
+    # Run the optimization process
+    optimizer.maximize(init_points=init_points, n_iter=n_iter)
+
+    # Retrieve the optimal parameter values
+    best_params = optimizer.max['params']
+    
+    # Extract the best parameters found
+    best_sd_noise = best_params['sd_noise']
+    best_proposal_sd = best_params['proposal_sd']
+    best_n_data = int(best_params['n_data'])
+    best_scale = best_params['scale']
+    
+    # Rerun the model with the best parameters to get the final estimates and error
+    x_data = np.linspace(0., 5., best_n_data).reshape(-1, 1)
+    nearest_x, y_obs = process_data(data["xhf"], parameters, x_data, data["Yhf"])
+
+    best_estimate, best_error, params_result = fwd_model.inverse_cuqi(
+        mean_prior=mean_prior,
+        x_real=parameters,
+        max_par=max(data["xhf"][:,1]),
+        y_obs=y_obs,
+        N=iterations,
+        burn_in=burn_in,
+        cov_prior=cov_prior,
+        sd_noise=best_sd_noise,
+        adapt=adapt,
+        scale=best_scale,
+        proposal_sd=best_proposal_sd,
+        number_chains=number_chains,
+        algo=algo,
+        x_data=x_data,
+        parallel=parallel
+    )
+
+    # Print the best parameters
+    print(f"Best parameters found: sd_noise={best_sd_noise}, proposal_sd={best_proposal_sd}, "
+          f"n_data={best_n_data}, scale={best_scale}")
+
+    return best_estimate, best_error, best_sd_noise, best_proposal_sd, best_n_data, best_scale
+
+
+
+
+
+def run_param_inverse_cuqi(
+    fwd_model, 
+    data: Dict[str, np.ndarray], 
+    parameters: np.ndarray, 
+    mean_prior: np.ndarray, 
+    cov_prior: np.ndarray, 
+    iterations: int, 
+    burn_in: int, 
+    adapt: bool, 
+    number_chains: int, 
+    algo: str, 
+    parallel: bool, 
+    sd_noise: float, 
+    proposal_sd: float, 
+    domain:Tuple[float,float],
+    n_data: int, 
+    scale: float
+) -> float:
+    """
+    Objective function that runs the simulation and returns the negative error for minimization.
+
+    Args:
+        fwd_model: The model object with an `inverse_cuqi` method.
+        data (Dict[str, np.ndarray]): Dictionary containing the high-fidelity data arrays ("xhf" and "Yhf").
+        parameters (np.ndarray): Real parameter values for comparison.
+        mean_prior (np.ndarray): Prior mean vector.
+        cov_prior (np.ndarray): Prior covariance matrix.
+        iterations (int): Number of iterations for the MCMC algorithm.
+        burn_in (int): Number of burn-in iterations for the MCMC algorithm.
+        adapt (bool): Flag to enable adaptive MCMC.
+        number_chains (int): Number of MCMC chains.
+        algo (str): Algorithm type for the optimization.
+        parallel (bool): Flag to enable parallel processing.
+        sd_noise (float): Noise standard deviation for the covariance noise matrix.
+        proposal_sd (float): Proposal standard deviation for the MCMC algorithm.
+        n_data (int): Number of data points to be used in the simulation.
+        scale (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+
+    Returns:
+        float: The negative of the error to be minimized.
+    """
+    
+    # Generate evaluation points in the input domain based on the number of data points
+    x_data = np.linspace(domain[0], domain[1], n_data).reshape(-1, 1)
+
+    # Process the data to obtain the observed values
+    _, y_obs = process_data(data["xhf"], parameters, x_data, data["Yhf"])
+
+    # Perform parameter estimation and calculate the error using the inverse_cuqi method
+    _, error, _ = fwd_model.inverse_cuqi(
+        mean_prior=mean_prior,
+        x_real=parameters,
+        max_par=np.max(data["xhf"][:, 1]),
+        y_obs=y_obs,
+        N=iterations,
+        burn_in=burn_in,
+        cov_prior=cov_prior,
+        sd_noise=sd_noise,
+        adapt=adapt,
+        scale=scale,
+        proposal_sd=proposal_sd,
+        number_chains=number_chains,
+        algo=algo,
+        x_data=x_data,
+        parallel=parallel
+    )
+    
+    # Return the negative of the error for minimization
+    return -error
+
 
 
 
@@ -606,32 +510,6 @@ def custom_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
 
 
 
-# Get Optimizer
-def getOpti(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
-    """
-    Returns the optimizer based on the given name.
-
-    Args:
-        name (str): Name of the optimizer.
-        lr (float): Learning rate for the optimizer.
-
-    Returns:
-        tf.keras.optimizers.Optimizer: The selected optimizer.
-
-    Raises:
-        ValueError: If the optimizer name is unknown.
-    """
-    optimizers = {
-        'Adam': Adam(learning_rate=lr, amsgrad=True),
-        'Nadam': Nadam(learning_rate=lr),
-        'Adamax': Adamax(learning_rate=lr),
-        'standardadam': 'adam'
-    }
-    
-    if name not in optimizers:
-        raise ValueError(f"Unknown optimizer name: {name}")
-    
-    return optimizers[name]
 
 def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Model:
     """
@@ -684,30 +562,6 @@ def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Mode
         hiddenlin = Dense(64, activation=custom_activation, kernel_regularizer=l2(params['l2weight']), 
                           kernel_initializer=params['kernel_init'])(inputs)
         output = Dense(num_outputs, activation='linear', name='HFper')(hiddenlin)
-
-    elif name == 'GP':
-        # Gaussian Process-like model with multiple outputs (HF and LF)
-        hidden1 = Dense(int(params['nodes']), activation='tanh', 
-                        kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']), 
-                        kernel_initializer=params['kernel_init'])(inputs)
-        hidden2 = Dense(int(params['nodes']), activation='tanh', 
-                        kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']), 
-                        kernel_initializer=params['kernel_init'])(hidden1)
-        hidden3 = Dense(int(params['nodes']), activation='tanh', 
-                        kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']), 
-                        kernel_initializer=params['kernel_init'])(hidden2)
-        hidden4 = Dense(int(params['nodes']), activation='tanh', 
-                        kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']), 
-                        kernel_initializer=params['kernel_init'])(hidden3)
-        GPlayer = Dense(2, activation='linear', kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']), 
-                        kernel_initializer=params['kernel_init'])(hidden4)
-        outputLF = Dense(num_outputs, activation='linear', name='LF')(GPlayer)
-        outputHF = Dense(num_outputs, activation='linear', name='HF')(GPlayer)
-        output = [outputHF, outputLF]
-        model = Model(inputs=inputs, outputs=output)
-        opti = getOpti(params['opt'], params['lr'])
-        model.compile(loss=custom_loss, loss_weights=[params['alpha'], 1 - params['alpha']], optimizer=opti)
-        return model
 
     elif name == 'Inter':
         # Intermediate model with a merge layer and dual outputs (HF and LF)

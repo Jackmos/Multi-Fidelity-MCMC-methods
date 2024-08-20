@@ -12,6 +12,8 @@ import pickle
 from module_utils import *
 sys.path.append('../utils')
 from Structure import *
+
+
 class ReactionDiffusionData:
 
     def __init__(self, path: str, tlf_0: float = 0.0, thf_0: float = 0.0, Tlf: float = 80.0, Thf: float = 40.0,

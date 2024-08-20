@@ -2,7 +2,6 @@ import numpy as np
 from numba import jit
 import matplotlib.pyplot as plt
 from typing import Any, Dict, Tuple, Callable, List
-from itertools import product
 
 
 
@@ -97,19 +96,19 @@ class FidelityFunctionModified:
         :return: Dictionary containing parameters and evaluated function values.
         """
         if example == "Basic":
-            Nhf, Nlf, NepoLF, NepoHF = 50, 80, 2500,2500 #50,100,2000, 2000
+            Nhf, NhPer, Nlf, NepoLF, NepoPer, NepoHF = 50, 40, 60, 2500,1500,2500 #50,100,2000, 2000
             deltas = np.linspace(0., 28., 4)
             deltas_val=np.linspace(np.min(deltas),np.max(deltas),3)
             deltas_test=np.linspace(np.min(deltas),np.max(deltas),5)
 
         elif example == "Discontinuous":
-            Nhf, Nlf, NepoLF, NepoHF = 16, 40, 2000, 5200
+            Nhf, NhPer, Nlf, NepoLF,NepoPer, NepoHF = 16, 16, 40, 2000, 1000,5200
             deltas = np.linspace(0., 15., 5)
             deltas_val=np.linspace(np.min(deltas),np.max(deltas),4)
             deltas_test=np.linspace(np.min(deltas),np.max(deltas),6)
 
         elif example == "Oscillatory":
-            Nhf, Nlf, NepoLF, NepoHF = 20, 64, 1000, 2000       # Nhf=15  ,64,1000,  3000
+            Nhf, NhPer, Nlf, NepoLF,NepoPer, NepoHF = 20, 20, 64, 1000, 1000, 2000       # Nhf=15  ,64,1000,  3000
             deltas = np.linspace(1 / 5, 6 / 5, 5) * np.pi               #8
             deltas_val=np.linspace(np.min(deltas),np.max(deltas),4)
             deltas_test=np.linspace(np.min(deltas),np.max(deltas),6)
@@ -118,11 +117,15 @@ class FidelityFunctionModified:
             raise ValueError(f"Unsupported example type: {example}")
         
         xhf = np.linspace(0, 5, Nhf)
+        xhfPer = np.linspace(0, 5, NhPer)
         xlf = np.linspace(0, 5, Nlf)
 
         # Prepare high fidelity data
         datahf = self._create_meshgrid(xhf, deltas)
         Yhf = self.modified_highfid(datahf[:, 0], datahf[:, 1])
+
+        datahfPer = self._create_meshgrid(xhfPer, deltas)
+        YhfPer = self.modified_highfid(datahfPer[:, 0], datahf[:, 1])
 
         # Prepare low fidelity data
         datalf = self._create_meshgrid(xlf, deltas)
@@ -132,18 +135,24 @@ class FidelityFunctionModified:
             "modified_highfid": self.modified_highfid,
             "modified_lowfid": self.modified_lowfid,
             "Nhf": Nhf,
+            "NhPer": NhPer,
             "Nlf": Nlf,
-            "xhf": datahf,          
+            "xhf": datahf,
+            "xhfPer":datahfPer,          
             "xlf": datalf,                       
             "x_vallf":self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val),
+            "x_valhfper":self._create_meshgrid(np.linspace(0, 5, NhPer), deltas_val),
             "x_valhf":self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val),
             "x_test":np.linspace(0, 5, 10000),
             "Yhf": Yhf,
+            "YhfPer":YhfPer,
             "Ylf": Ylf,
-            "dataval_lf":self.modified_lowfid(self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,1]),        
+            "dataval_lf":self.modified_lowfid(self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, Nlf), deltas_val)[:,1]),  
+            "dataval_hfper":self.modified_highfid(self._create_meshgrid(np.linspace(0, 5, NhPer), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, NhPer), deltas_val)[:,1]),              
             "dataval_hf":self.modified_highfid(self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val)[:,0],self._create_meshgrid(np.linspace(0, 5, Nhf), deltas_val)[:,1]),        
             "datatest":self._create_meshgrid(np.linspace(0, 5, 10000), deltas_test),        
             "NepoLF": NepoLF,
+            "NepoPer": NepoPer,
             "NepoHF": NepoHF,
             "deltas": deltas
         }

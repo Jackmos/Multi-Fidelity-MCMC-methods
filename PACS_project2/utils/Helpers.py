@@ -1,35 +1,28 @@
+import contextlib
+import numpy as np
 import os
 import sys
 import time
+import tinyDA as tda
+
+from cuqi.geometry import Continuous1D, Continuous2D, Discrete
+from cuqi.model import Model as CuqiModel
+from enum import Enum
 from functools import wraps
-import contextlib 
-from typing import Callable, Tuple, Any, Dict, Union
-import numpy as np
-from sklearn.model_selection import KFold
 from joblib import Parallel, delayed
-from tensorflow.keras.optimizers import Adam, Nadam, Adamax, RMSprop
-from tensorflow.keras.models import Model
-from module_utils import *
+from numba import jit, njit
+from numpy import newaxis as _   # easier reading
+from scipy.stats import multivariate_normal
+from sklearn.model_selection import KFold
+from tensorflow.keras.optimizers import Adam, Adamax, Nadam, RMSprop
+from typing import Any, Callable, Dict, Optional, Tuple, Union
+
+from BIP_functions import *
+from Helpers import *
 from Structure import *
+from module_utils import *
 
-# Function to load context functions from a specified folder
-def load_context_functions(context_folder: str) -> bool:
-    """
-    Adds the specified context folder to the system path.
 
-    Parameters:
-    - context_folder: Path to the folder containing context functions.
-
-    Returns:
-    - True if the folder is successfully added to the system path.
-    - False if there is an exception.
-    """
-    try:
-        sys.path.append(context_folder)
-        return True
-    except Exception as e:
-        print(f"Error loading context folder {context_folder}: {e}")
-        return False
 
 def compute_time(func: Callable) -> Callable:
     """
@@ -61,7 +54,198 @@ def Suppressor():
         pass
 
 
-# Class to handle a function and compute its Jacobian matrix
+# Helpers functions for Structure..py, INetwork class 
+
+def check_observation_shape(y_obs: np.ndarray) -> Tuple[Optional[int], Optional[Any]]:
+    """
+    Check the dimensionality of the observation array and set geometry accordingly.
+
+    Parameters:
+    - y_obs: np.ndarray, the observation data
+
+    Returns:
+    - dim_obs: int or None, the dimensionality of the observation data (1D or 2D)
+    - range_geometry: object or None, the corresponding geometry object for the observation data.
+    """
+    if len(y_obs.shape) == 1 or y_obs.shape[1] == 1:
+        dim_obs = 1
+        range_geometry = Continuous1D(y_obs.shape[0])
+    elif y_obs.shape[1] == 2:
+        dim_obs = 2
+        range_geometry = Continuous2D(y_obs.shape[0])
+    else:
+        warnings.warn("Impossible for Cuqipy to manage a problem with 3 or more equations", UserWarning)
+        return None, None
+    return dim_obs, range_geometry
+
+
+def initialize_model(forward_fn: Any, algo: str, range_geometry: Any, m: int) -> Any:
+    """
+    Initialize the CuqiModel based on the selected algorithm.
+
+    Parameters:
+    - forward_fn: function, the forward prediction function
+    - algo: str, the selected MCMC algorithm ("MH" or "NUTS")
+    - range_geometry: object, geometry describing the range of the model
+    - m: int, the number of parameters to estimate
+
+    Returns:
+    - CuqiModel, the initialized CuqiModel object for the specified algorithm.
+    """
+    if algo == "NUTS":
+        fun = Function(forward_fn)
+        return CuqiModel(forward=forward_fn, jacobian=fun.compute_jacobian, 
+                         range_geometry=range_geometry, domain_geometry=Discrete(m))
+    else:
+        return CuqiModel(forward=forward_fn, range_geometry=range_geometry, 
+                         domain_geometry=Discrete(m))
+
+@njit
+def concatenate_inputs(inputs: np.ndarray, x_final: np.ndarray) -> np.ndarray:
+    """
+    Concatenate inputs and final processed data depending on dimensionality.
+
+    Parameters:
+    - inputs: np.ndarray, the initial input data (n, 1) or other shapes
+    - x_final: np.ndarray, the final processed data to be concatenated with inputs
+    
+    Returns:
+    - np.ndarray, concatenated input data after processing
+    """
+    # Handle different dimensionalities of the processed `x_final` data.
+    if x_final.ndim == 2:
+        # 2D Case: self.inputs (n, 1) and x_final (n, dim-1)
+        concatenated_input = np.concatenate((inputs, x_final), axis=1)
+
+    elif x_final.ndim == 3:
+        # 3D Case: self.inputs (n, 1) and x_final (1, n, dim-1)
+        inputs_expanded = np.expand_dims(inputs, axis=0)  
+        concatenated_input = np.concatenate((inputs_expanded, x_final), axis=-1)
+
+    else:
+        # Raise an error if `x_final` has an unsupported number of dimensions.
+        raise ValueError("Unsupported number of dimensions for x_final")
+    
+    return concatenated_input
+
+@njit
+def relative_error(estimates: np.ndarray, x_real: np.ndarray) -> np.ndarray:
+    """
+    Compute the relative error between estimated values and true values.
+
+    Parameters:
+    - estimates: np.ndarray, the estimated parameter values
+    - x_real: np.ndarray, the true parameter values for comparison
+    
+    Returns:
+    - np.ndarray, the relative error between estimates and true values.
+    """
+    return np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
+
+@njit
+def calculate_metrics(output_test: np.ndarray, pred: np.ndarray) -> Tuple[float, float]:
+    """
+    Calculate the Mean Squared Error (MSE) and R^2 score between the test data and predictions.
+
+    Parameters:
+    - output_test: np.ndarray, true output data
+    - pred: np.ndarray, predicted output data
+    
+    Returns:
+    - test_mse: float, Mean Squared Error between test and predicted outputs
+    - r2: float, R^2 score indicating the proportion of variance explained by the model
+    """
+    test_mse = np.mean(np.square(output_test - pred))
+    r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
+    return test_mse, r2
+
+@jit
+def apply_noise(y_obs: np.ndarray, cov_noise: float) -> np.ndarray:
+    """
+    Add noise to the observation data based on a specified covariance.
+
+    Parameters:
+    - y_obs: np.ndarray, the original observation data
+    - cov_noise: float, the standard deviation of the noise to be added
+    
+    Returns:
+    - np.ndarray, the perturbed observation data with added noise.
+    """
+    return y_obs + np.random.normal(loc=0.0, scale=cov_noise, size=y_obs.shape)
+
+
+def setup_prior(mean_prior: np.ndarray, cov_prior: Optional[np.ndarray]) -> multivariate_normal:
+    """
+    Set up the prior distribution for Bayesian inference.
+
+    Parameters:
+    - mean_prior: np.ndarray, the mean vector for the prior distribution
+    - cov_prior: Optional[np.ndarray], covariance matrix for the prior. If None, a default is used.
+    
+    Returns:
+    - multivariate_normal, a multivariate normal distribution representing the prior.
+    """
+    if cov_prior is None:
+        cov_prior = np.eye(len(mean_prior)) * 0.2  # Scale covariance
+    return multivariate_normal(mean_prior, cov_prior)
+
+def setup_likelihood(y_obs: np.ndarray, cov_likelihood: Optional[np.ndarray], cov_noise: float, dim: int) -> Any:
+    """
+    Set up the likelihood function for Bayesian inference.
+
+    Parameters:
+    - y_obs: np.ndarray, observed data
+    - cov_likelihood: Optional[np.ndarray], covariance matrix for the likelihood. If None, a default is used.
+    - cov_noise: float, standard deviation of the observation noise
+    - dim: int, dimensionality of the observation data
+    
+    Returns:
+    - tda.GaussianLogLike, the Gaussian likelihood function for the Bayesian model.
+    """
+    if cov_likelihood is None:
+        cov_likelihood = cov_noise ** 2 * np.eye(dim)
+    return tda.GaussianLogLike(y_obs, cov_likelihood)
+
+def simulate_observations(x_real: np.ndarray, cov_noise: float, model_wrapper: Any) -> np.ndarray:
+    """
+    Simulate noisy observations using a given model wrapper.
+
+    Parameters:
+    - x_real: np.ndarray, the true parameter values
+    - cov_noise: float, standard deviation of the noise to add to observations
+    - model_wrapper: Any, a function or object that generates predictions based on the true parameters
+    
+    Returns:
+    - np.ndarray, simulated observation data with added noise.
+    """
+    return model_wrapper(x_real) + np.random.normal(loc=0.0, scale=cov_noise, size=x_real.shape)
+
+
+
+
+
+
+# Function to load context functions from a specified folder
+def load_context_functions(context_folder: str) -> bool:
+    """
+    Adds the specified context folder to the system path.
+
+    Parameters:
+    - context_folder: Path to the folder containing context functions.
+
+    Returns:
+    - True if the folder is successfully added to the system path.
+    - False if there is an exception.
+    """
+    try:
+        sys.path.append(context_folder)
+        return True
+    except Exception as e:
+        print(f"Error loading context folder {context_folder}: {e}")
+        return False
+
+
+# Class to handle a function and compute its Jacobian matrix (used for NUTS, cuqipy library)
 class Function:
     def __init__(self, func: Callable[[np.ndarray], np.ndarray]) -> None:
         """
@@ -155,34 +339,8 @@ def transfBestparam(best_params: Dict[str, Any], dic: Dict[str, Any]) -> None:
         if key in ["kernel_init", "opt"]:
             best_params[key] = dic[key][best_params[key]]
 
-def getOpti(name: str, lr: float) -> Union[str, Adam, Nadam, Adamax, RMSprop]:
-    """
-    Retrieve the optimizer based on the provided name and learning rate.
-
-    Args:
-        name (str): Name of the optimizer.
-        lr (float): Learning rate for the optimizer.
-
-    Returns:
-        Union[str, Adam, Nadam, Adamax, RMSprop]: The optimizer object or 'adam' string for standard Adam.
-
-    Raises:
-        ValueError: If the optimizer name is not recognized.
-    """
-    optimizers = {
-        'Adam': Adam(learning_rate=lr, amsgrad=True),
-        'Nadam': Nadam(learning_rate=lr),
-        'Adamax': Adamax(learning_rate=lr),
-        'RMSprop': RMSprop(learning_rate=lr),
-        'standardadam': 'adam'
-    }
-    
-    if name not in optimizers:
-        raise ValueError(f"Optimizer name '{name}' is not recognized. Valid options are: {list(optimizers.keys())}")
-    
-    return optimizers[name]
   
-
+# Different types of Cross Validations
 def kCrossVal(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
               name: str, input_shape: int, output_shape: int, p: int = 1) -> float:
     """

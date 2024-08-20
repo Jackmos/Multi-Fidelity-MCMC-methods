@@ -5,14 +5,9 @@ from tensorflow.keras.layers import Dense, Input, concatenate, LSTM, Dropout
 from tensorflow.keras.optimizers import Adam,Nadam,Adamax
 import tensorflow as tf
 from typing import Callable, Tuple, Any, List, Optional, Union, Dict
-
-from sklearn.model_selection import KFold
+from numba import njit
 import numpy as np
-from matplotlib import pyplot as plt
-from time import perf_counter
-
 from itertools import product
-#from cuqi.model import Model as CuqiModel
 
 
 # Define custom types for better readability
@@ -182,24 +177,6 @@ def getModel(params: ParamsType, num_inputs: int, name: str, num_outputs: int) -
         hiddenlin = Dense(64, activation=custom_activation, kernel_regularizer=l2(params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
         output = Dense(num_outputs, activation='linear', name='HFper')(hiddenlin)
 
-    elif name == 'GP':
-        # Gaussian Process inspired model with dual outputs
-        inputs = Input(shape=(num_inputs,))
-        hidden1 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(inputs)
-        hidden2 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden1)
-        hidden3 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden2)
-        hidden4 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden3)
-        GPlayer = Dense(2, activation='linear', kernel_regularizer=l2((1-params['alpha'])*params['l2weight']), kernel_initializer=params['kernel_init'])(hidden4)
-        outputLF = Dense(1, activation='linear', name='LF')(GPlayer)
-        outputHF = Dense(1, activation='linear', name='HF')(GPlayer)
-        output = [outputHF, outputLF]
-
-        # Compile model with custom loss and optimizer
-        model = Model(inputs=inputs, outputs=output)
-        opti = getOpti(params['opt'], params['lr'])
-        model.compile(loss=custom_loss, loss_weights=[params['alpha'], 1-params['alpha']], optimizer=opti)
-        return model
-
     elif name == 'Inter':
         # Intermediate frequency model with dual outputs
         inputs = Input(shape=(num_inputs,))
@@ -227,7 +204,7 @@ def getModel(params: ParamsType, num_inputs: int, name: str, num_outputs: int) -
     return model
 
 
-
+@njit
 def process_data(datahf: np.ndarray, 
                  parameters: np.ndarray, 
                  t_eval: np.ndarray, 

@@ -435,58 +435,6 @@ def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Mode
         # output = Dense(units=num_outputs, activation="linear", name="output_hf")(ifft_layer)
 
 
-
-    elif name == "GP":
-        # Model architecture for the "GP" model
-        hidden1 = Dense(
-            units=int(params["nodes"]),
-            activation=custom_activation,
-            kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
-            kernel_initializer=params["kernel_init"]
-        )(inputs)
-        
-        hidden2 = Dense(
-            units=int(params["nodes"]),
-            activation=custom_activation,
-            kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
-            kernel_initializer=params["kernel_init"]
-        )(hidden1)
-        
-        hidden3 = Dense(
-            units=int(params["nodes"]),
-            activation=custom_activation,
-            kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
-            kernel_initializer=params["kernel_init"]
-        )(hidden2)
-        
-        hidden4 = Dense(
-            units=int(params["nodes"]),
-            activation=custom_activation,
-            kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
-            kernel_initializer=params["kernel_init"]
-        )(hidden3)
-        
-        GPlayer = Dense(
-            units=2,
-            activation=custom_activation,
-            kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
-            kernel_initializer=params["kernel_init"]
-        )(hidden4)
-        
-        outputLF = Dense(1, activation="linear", name="LF")(GPlayer)
-        outputHF = Dense(1, activation="linear", name="HF")(GPlayer)
-        
-        output = [outputHF, outputLF]
-        
-        model = Model(inputs=inputs, outputs=output)
-        opti = getOpti(params["opt"], params["lr"])
-        model.compile(
-            loss=custom_loss,
-            loss_weights=[params["alpha"], 1 - params["alpha"]],
-            optimizer=opti
-        )
-        return model
-
     elif name == "Inter":
         # Model architecture for the "Inter" model
         hidden1 = Dense(
