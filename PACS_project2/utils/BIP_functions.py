@@ -36,8 +36,16 @@ def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo
     Returns:
         str: The path to the created folder.
     """
+
+    if np.isscalar(rwmh_cov):
+        rwmh_cov_save=np.array([[rwmh_cov]])
+    else:
+        rwmh_cov_save=rwmh_cov
+
+
     # Convert key parameters to strings that are safe to use in a file path
-    rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov, precision=2).replace("\n", "")
+
+    rwmh_cov_str = "None" if rwmh_cov is None else np.array_str(rwmh_cov_save, precision=2).replace("\n", "")
     rwmh_adaptive_str = "adaptive" if rwmh_adaptive else "non_adaptive"
 
     # Create a folder name based on key parameters
@@ -50,13 +58,13 @@ def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo
 
 
 
-def setup_proposal(algo: str, rwmh_cov: np.ndarray, rmwh_scaling: float, rwmh_adaptive: bool, period: int, t0: int, dim: int, num_params:int):
+def setup_proposal(algo: str, rwmh_cov: float, rmwh_scaling: float, rwmh_adaptive: bool, period: int, t0: int, dim: int, num_params:int):
     """
     Set up the proposal distribution based on the chosen algorithm.
 
     Args:
         algo (str): The algorithm used ('MH', 'AM', 'CN', 'DREAMZ').
-        rwmh_cov (np.ndarray): Covariance matrix for the proposal distribution.
+        rwmh_cov (float): Covariance for the proposal distribution. ATTENTION, it supports only multiples of identity matrix
         rmwh_scaling (float): Scaling factor for the Metropolis-Hastings algorithm.
         rwmh_adaptive (bool): Indicates whether the algorithm is adaptive.
         period (int): The period for adaptation (if applicable).
@@ -68,9 +76,9 @@ def setup_proposal(algo: str, rwmh_cov: np.ndarray, rmwh_scaling: float, rwmh_ad
         Object: An instance of the proposal distribution.
     """
     if algo == "MH":
-        return GaussianRandomWalk(C=rwmh_cov, scaling=rmwh_scaling, adaptive=rwmh_adaptive)
+        return GaussianRandomWalk(C=np.array([[rwmh_cov]])*np.eye(num_params), scaling=rmwh_scaling, adaptive=rwmh_adaptive)
     elif algo == "AM":
-        return AdaptiveMetropolis(C0=rwmh_cov*np.eye(num_params), adaptive=rwmh_adaptive, period=period, t0=t0)
+        return AdaptiveMetropolis(C0=np.array([[rwmh_cov]])*np.eye(num_params), adaptive=rwmh_adaptive, period=period, t0=t0)
     elif algo == "CN":
         return CrankNicolson(scaling=rmwh_scaling, adaptive=rwmh_adaptive, period=period)
     elif algo == "DREAMZ":
@@ -139,7 +147,7 @@ def MCMC(
     burnin: int, 
     n: int = 1, 
     diagnostic: bool = True,
-    rwmh_cov: np.ndarray = None, 
+    rwmh_cov: float = None, 
     rmwh_scaling: float = 0.1, 
     period: int = 100, 
     t0: int = 0, 
@@ -159,7 +167,7 @@ def MCMC(
     - burnin (int): Number of burn-in iterations to discard.
     - n (int): Number of chains to run. Default is 1.
     - diagnostic (bool): Whether to output diagnostics. Default is True.
-    - rwmh_cov (np.ndarray): Covariance matrix for the random walk Metropolis-Hastings proposal. Default is None.
+    - rwmh_cov (float): Covariance matrix for the random walk Metropolis-Hastings proposal. Default is None.
     - rmwh_scaling (float): Scaling factor for the proposal distribution. Default is 0.1.
     - period (int): Period for updating the proposal if adaptive. Default is 100.
     - t0 (int): Initial iteration for adaptation. Default is 0.
@@ -186,6 +194,8 @@ def MCMC(
 
     # Ensure subsampling_rate is a list of ints
     subsampling_rate = [subsampling_rate] * (len(my_posterior) - 1) if isinstance(subsampling_rate, int) else subsampling_rate
+    if len(my_posterior)==2:
+        subsampling_rate=subsampling_rate[0]
 
     # Perform MCMC sampling
     my_chains = sample(
@@ -199,7 +209,7 @@ def MCMC(
     )
 
     # Convert the chains into inference data
-    idata = to_inference_data(my_chains, level=(len(my_posterior) - 1), burnin=burnin) if len(my_posterior) > 1 else to_inference_data(my_chains, burnin=burnin)
+    idata = to_inference_data(my_chains, level=(len(my_posterior) - 1), burnin=burnin) if len(my_posterior) > 2 else to_inference_data(my_chains, burnin=burnin)
 
 
     if diagnostic:
@@ -246,7 +256,6 @@ def create_folder_name(base_name: str, max_length: int = 255) -> str:
     return folder_name
 
 
-@njit
 def create_trace_plot(chains: np.ndarray, folder_name: str) -> None:
     """
     Create and save trace plots for MCMC chains.
@@ -281,12 +290,24 @@ def calculate_statistics(estimates: np.ndarray) -> tuple:
     Returns:
         tuple: A tuple containing the mean and standard deviation of the estimates.
     """
-    mean = np.mean(estimates, axis=1)
-    std_dev = np.std(estimates, axis=1)
+    # mean = np.mean(estimates, axis=1)
+    # std_dev = np.std(estimates, axis=1)
+
+    mean = estimates.sum(axis=1) / estimates.shape[1]
+    std_dev = np.zeros(estimates.shape[0])
+    
+    for i in range(estimates.shape[0]):
+        variance = 0.0
+        for j in range(estimates.shape[1]):
+            variance += (estimates[i, j] - mean[i]) ** 2
+        variance /= estimates.shape[1]
+        std_dev[i] = variance ** 0.5
+
+
+
     return mean, std_dev
 
 
-@njit
 def save_diagnostics(folder_name: str, estimates: np.ndarray, ess: float, r_hat: float) -> None:
     """
     Save diagnostic statistics to a text file.
@@ -573,123 +594,3 @@ def plot_hist(
 
 
 
-
-
-
-
-
-    # def MCMC_cuqi(
-#     y: Any, 
-#     x: Any, 
-#     observation: np.ndarray, 
-#     N: int, 
-#     m:int,
-#     burn_in: int, 
-#     n: int = 1, 
-#     diagnostic: bool = True, 
-#     algo: str = "MH", 
-#     adapt: bool = False, 
-#     scale: float = 0.3,
-#     parallel: bool = False
-# ) -> np.ndarray:
-#     """
-#     Perform MCMC sampling using CUQI library.
-
-#     Args:
-#         y (Any): Dependent variable.
-#         x (Any): Independent variable.
-#         observation (np.ndarray): Observed data.
-#         N (int): Number of samples to draw.
-#         m (int): dimension of the QoI
-#         burn_in (int): Number of burn-in samples to discard.
-#         n (int, optional): Number of chains. Defaults to 1.
-#         diagnostic (bool, optional): Whether to plot diagnostic plots. Defaults to True.
-#         algo (str, optional): Sampling algorithm to use. Defaults to "MH".
-#         adapt (bool, optional): Whether to use adaptive sampling. Defaults to False.
-#         scale (float, optional): Scaling factor for MH algorithm. Defaults to 0.3.
-#         parallel (bool, optional): Whether to run chains in parallel. Defaults to False.
-
-#     Returns:
-#         np.ndarray: Array of estimated parameter means.
-#     """
-
-#     estimates = np.empty((1, 0))
-#     chains = np.empty((0, 1, N - burn_in))
-#     post = np.empty((1, 0))
-#     posterior = JointDistribution(x, y)(y=observation)
-
-#     if parallel:
-#         logging.getLogger('tensorflow').setLevel(logging.ERROR)
-#         tf.get_logger().setLevel('ERROR')
-#         ray.init(ignore_reinit_error=True, logging_level=logging.WARNING, log_to_driver=False)
-#         futures = [chain_creation_parallel.remote(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
-#         results = ray.get(futures)
-#         ray.shutdown()
-#     else:
-#         results = [chain_creation(N, burn_in, diagnostic, algo, adapt, scale, posterior, x_init=np.array([10.])) for _ in range(n)]
-
-#     for result in results:
-#         estimates = np.column_stack((estimates, result[0])) # non crea problemi per più parametri?
-#         chains = np.concatenate((chains, result[1]), axis=0)
-#         post = np.concatenate((post, result[2]), axis=1)
-
-#     for l in range(chains.shape[1]):
-#         plt.figure(figsize=(10, 4))
-#         for i in range(chains.shape[0]):
-#             plt.plot(chains[i, l, :])
-#         plt.xlabel('Sample')
-#         plt.ylabel('Value')
-#         plt.title(f'Trace Plot for variable {l}')
-#         plt.legend([f'Chain {i+1}' for i in range(chains.shape[0])])
-#         plt.show()
-
-#     if diagnostic:
-#         num_bins = 20
-#         plt.figure()
-#         for num in range(post.shape[0]):
-#             bin_edges = np.linspace(np.min(post[num, :]), np.max(post[num, :]), num_bins + 1)
-#             hist, _ = np.histogram(post[num, :], bins=bin_edges)
-#             hist = hist / post.shape[1]
-#             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-#             plt.bar(bin_centers, hist, width=np.diff(bin_edges), edgecolor='black', label=f'Var {num + 1}')
-#             plt.xlabel('Value')
-#             plt.ylabel('Probability')
-#             plt.title('Distribution')
-#             plt.legend()
-#             plt.show()
-
-#         autocov = az.autocov(chains[:, 0, :])
-#         ess = az.ess(chains[:, 0, :])
-#         print(f"ESS values = {ess}")
-#         plt.figure()
-#         plt.plot(autocov[0, :])
-#         plt.title('Autocovariance first chain')
-#         plt.xlabel('Lag')
-#         plt.ylabel('Autocovariance')
-#         plt.legend()
-#         plt.show()
-
-
-#     # mean=az.summary(idata)['mean']
-#     # estimates = np.array(mean)
-#     # print(f"Estimated values are {estimates}")
-
-#     # if diagnostic:
-
-#     #     print(az.summary(idata))
-
-#     #     az.plot_trace(idata)
-#     #     print("----  Autocorrelation  ----")
-#     #     az.plot_autocorr(idata)
-#     #     print("----  Effective Sample Size  ----")
-#     #     az.plot_ess(idata) # az.plot_ess(inference_data, var_names=["parameter1", "parameter2", ...])
-#     #     print("----  Effective Sample Size per iteration  ----")        
-#     #     az.plot_ess(idata,kind='local')        
-#     #     # print("----  Pair Plots  ----")
-#     #     # az.plot_pair(idata)
-#     #     print("----  Rank Plots  ----")
-#     #     az.plot_rank(idata)
-
-
-
-#     return estimates

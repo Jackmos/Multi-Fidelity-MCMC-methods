@@ -331,7 +331,7 @@ class INetwork(ABC):
                     burn_in: int = 500, 
                     levels: int = 1, 
                     diagnostic: bool = True, 
-                    rwmh_cov: Optional[np.ndarray] = None, 
+                    rwmh_cov: Optional[float] = None, 
                     rmwh_scaling: float = 0.1, 
                     rwmh_adaptive: bool = True,
                     subsampling_rate: Union[int, List[int]] = 1,
@@ -355,7 +355,7 @@ class INetwork(ABC):
         - burn_in (int): Number of burn-in iterations.
         - levels (int): Number of model levels (for multi-level modeling).
         - diagnostic (bool): Flag indicating whether to generate diagnostic plots.
-        - rwmh_cov (Optional[np.ndarray]): Covariance matrix for the RWMH proposal distribution.
+        - rwmh_cov (Optional[float]): Covariance for the RWMH proposal distribution.
         - rmwh_scaling (float): Scaling factor for the RWMH proposal.
         - rwmh_adaptive (bool): Flag for enabling adaptive RWMH proposals.
         - subsampling_rate (Union[int, List[int]]): Rate or rates of subsampling the posterior. Default is 1.
@@ -372,6 +372,9 @@ class INetwork(ABC):
 
         self.transformations = transformation
         self.inputs = x_data
+        # if levels>1:
+        #     for mod in self.model_list:
+        #         mod.inputs=x_data
 
         # Determine the dimensionality of the data.
         dim = (x_real.shape[0] if x_real is not None else (y_obs.shape[0] if y_obs is not None else None))
@@ -390,7 +393,7 @@ class INetwork(ABC):
         if y_obs is None:
             y_obs = simulate_observations(x_real, cov_noise, self._wrapper_prediction)
         else:
-            y_obs = apply_noise(y_obs, cov_noise).flatten()
+            y_obs = perturbation(y_obs, cov_noise).flatten()
 
         # Multi-level model handling
         if levels > 1:
@@ -398,7 +401,10 @@ class INetwork(ABC):
                 warnings.warn("Single-level case considered", UserWarning)
             elif levels > len(self.model_list):
                 raise ValueError("Number of levels exceeds available models")
-
+            
+            for l in range(levels):
+                self.model_list[l]._set_level(x_data=x_data, prev_steps=self.model_list[0:l], level=l+1)
+                
             # Setup multi-level model hierarchy
             my_loglike = [setup_likelihood(y_obs, cov_likelihood, cov_noise, dim) for _ in range(levels)]
             my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i]._wrapper_prediction) for i in range(levels)]
@@ -410,7 +416,8 @@ class INetwork(ABC):
 
         # Default to the identity matrix for the RWMH proposal covariance if none is provided.
         if rwmh_cov is None:
-            rwmh_cov = np.eye(len(x_real))
+            #rwmh_cov = np.eye(len(x_real))
+            rwmh_cov =1.
 
         # Perform MCMC sampling, using the specified algorithm and settings.
         estimates, param_results = MCMC(
@@ -434,13 +441,14 @@ class INetwork(ABC):
             self._plot_diagnostics(estimates, x_real, max_par)
         
         # Compute the relative error between estimates and x_real
-        error = np.mean(relative_error(estimates, x_real))
+        error = np.sum(relative_error(estimates, x_real))
         
         return estimates, error, param_results
     
 
     @compute_time
-    def inverse_cuqi(self,mean_prior: np.ndarray,                                    
+    def inverse_cuqi(self,
+                    mean_prior: np.ndarray,                                    
                     x_data: np.ndarray,
                     max_par:float,
                     x_real: Optional[np.ndarray] = None, 
@@ -520,7 +528,7 @@ class INetwork(ABC):
         y = Gaussian(A(x), sqrtcov=proposal_sd)
 
         # Perturb observations
-        y_obs = apply_noise(y_obs, sd_noise) # Add noise to provided observations
+        y_obs = perturbation(y_obs, sd_noise) # Add noise to provided observations
 
         # Run MCMC to get estimates
         estimates,parameters = MCMC_cuqi(y, x, y_obs, N, m, burn_in, number_chains, diagnostic=diagnostic, algo=algo, adapt=adapt, scale=scale, parallel=parallel)
@@ -580,7 +588,6 @@ class INetwork(ABC):
         gc.collect()
 
 
-    @staticmethod
     def save(self, file_path: str) -> None: 
         """ 
         Save the trained Neural Network model to a file. 
@@ -870,7 +877,7 @@ class Neural_Network(INetwork):
 
     def _set_level(self, x_data: np.ndarray, prev_steps: List, level: int = 1) -> None:            
         """
-        Sets the level of the model and stores the input data and previous steps. Usefull in a multifidelity scenario
+        Sets the level of the model and stores the input data and previous steps. Usefull in a multilevel scenario
 
         Args:
             x_data (np.ndarray): The input data for the model.
@@ -972,38 +979,40 @@ class MultiFidelity(INetwork):
             params += [None] * (len(names) - len(params))
 
         self._params=params
-        # Initialize training data for the first model
-        data_train_support = data_train[0]
-        data_val_support=data_val[0]
-        # Iterate over the network names to create and train each model
-        for index, name in enumerate(names):
-            # Build and train the network for the current fidelity level
-            model = NetworkFactory.build_network(
-                name,
-                params=params[index],
-                data_train=data_train_support,     # Use current training data
-                output_train=output_train[index],  # Use corresponding output data
-                data_val=data_val_support,     # Use current training data
-                output_val=output_val[index],                
-                N=self._Ns[index],
-                n=self._ns[index],
-                train=train,
-                do_HPO=do_HPO,
-                verbose=verbose,
-                device=device,
-                profiler=profiler
-            )
-            self.model_list.append(model)
 
-            # Update training data for the next model, if any
-            if (index + 1) < len(data_train) and train:
-                data_train_support = data_train[index + 1]
-                data_val_support = data_val[index + 1]
+        if data_train is not None and self._params is not None:
+            # Initialize training data for the first model
+            data_train_support = data_train[0]
+            data_val_support=data_val[0]
+            # Iterate over the network names to create and train each model
+            for index, name in enumerate(names):
+                # Build and train the network for the current fidelity level
+                model = NetworkFactory.build_network(
+                    name,
+                    params=params[index],
+                    data_train=data_train_support,     # Use current training data
+                    output_train=output_train[index],  # Use corresponding output data
+                    data_val=data_val_support,         # Use current training data
+                    output_val=output_val[index],                
+                    N=self._Ns[index],
+                    n=self._ns[index],
+                    train=train,
+                    do_HPO=do_HPO,
+                    verbose=verbose,
+                    device=device,
+                    profiler=profiler
+                )
+                self.model_list.append(model)
 
-                # Incorporate predictions from previous models into the training data
-                for l in range(index + 1):
-                    data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
-                    data_val_support = np.c_[data_val_support, self.model_list[l].prediction(data_val_support)]
+                # Update training data for the next model, if any
+                if (index + 1) < len(data_train) and train:
+                    data_train_support = data_train[index + 1]
+                    data_val_support = data_val[index + 1]
+
+                    # Incorporate predictions from previous models into the training data
+                    for l in range(index + 1):
+                        data_train_support = np.c_[data_train_support, self.model_list[l].prediction(data_train_support)]
+                        data_val_support = np.c_[data_val_support, self.model_list[l].prediction(data_val_support)]
 
     def plot_training_loss(self) -> None:
         """
@@ -1133,7 +1142,6 @@ class MultiFidelity(INetwork):
 
         return self.outputs[:, -self.output_shape:]  # Return only the final model's prediction
 
-    @staticmethod
     def save(self, file_paths: List[str]) -> None: 
         """ 
         Save the trained Neural networks model to a file. 

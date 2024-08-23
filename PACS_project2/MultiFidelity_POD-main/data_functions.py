@@ -9,9 +9,11 @@ from matplotlib.animation import PillowWriter
 from IPython.display import HTML
 import h5py
 import pickle
+import sys
 from module_utils import *
 sys.path.append('../utils')
 from Structure import *
+from scipy.spatial import cKDTree
 
 
 class ReactionDiffusionData:
@@ -283,24 +285,34 @@ class ReactionDiffusionData:
         - new_inputs (np.ndarray): New input data incorporating low fidelity model.
         """
         
+        time_scale=np.linspace(np.min(data_points),np.max(data_points),801).reshape(-1,1)
+        mask=time_scale.flatten()
+        reference=data_points.flatten()
+
+        tree = cKDTree(mask.reshape(-1, 1))
+        _, indices = tree.query(reference.reshape(-1, 1), k=1)
+
         if not self.fwd_uLF:
             self._import_uLF_POD_evaluation(fwd_LSTM_folder)
             
-        data_norm=normalization(data_points, self.Thf,0.)# completa con self. tmax, self.t min
-        x_result=normalization(x_final, self.mu_1, self.mu_0)
+        time_scale=normalization(time_scale, self.Tlf,0.)# completa con self. tmax, self.t min
+        x_result=np.ones(time_scale.shape)*normalization(x_final, self.mu_1, self.mu_0)[0,0]
 
-        domain =np.concatenate((x_result, data_norm),axis=1)  # (\mu,t)
+        domain =np.concatenate((x_result, time_scale),axis=1)  # (\mu,t)
         domain=domain.reshape(1,domain.shape[0], domain.shape[1]) 
         # # check dimensione 
         # x_final=domain[:, :, [1, 0]]
         # x_final[:,:,0]=denormalization(x_final[:,:,0], self.Thf,0.)
         # x_final[:,:,1]=denormalization(x_final[:,:,1], self.mu_1, self.mu_0)
 
-        x_final=domain[:, :, [1]]
-        x_final[:,:,0]=denormalization(x_final[:,:,0], self.mu_1, self.mu_0)
+        x_final=denormalization(domain[:, :, [0]][:,indices,:],self.mu_1,self.mu_0)
+        #x_final=x_final.reshape(1,domain.shape[0],1)
+        #x_final[:,:,0]=denormalization(x_final[:,:,0], self.mu_1, self.mu_0)
 
         for l in range(self.n_POD):
-            x_final=np.concatenate((x_final, denormalization(self.fwd_uLF[l].prediction(domain),np.max(self.u_train_POD[l]),np.min(self.u_train_POD[l]))),axis=2)    # denormalized with u_LF because bigger set 
+            value=denormalization(self.fwd_uLF[l].prediction(domain),np.max(self.u_train_POD[l]),np.min(self.u_train_POD[l]))
+
+            x_final=np.concatenate((x_final, value[:,indices,:]/(np.max(self.u_train_POD))),axis=2)    # denormalized with u_LF because bigger set 
         
 
         return x_final

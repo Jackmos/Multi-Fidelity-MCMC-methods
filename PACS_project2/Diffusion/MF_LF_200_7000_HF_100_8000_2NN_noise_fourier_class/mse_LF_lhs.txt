@@ -1,0 +1,1 @@
+Discretization	diffusion	MSE

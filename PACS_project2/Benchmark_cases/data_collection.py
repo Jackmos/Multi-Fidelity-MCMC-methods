@@ -125,7 +125,7 @@ class FidelityFunctionModified:
         Yhf = self.modified_highfid(datahf[:, 0], datahf[:, 1])
 
         datahfPer = self._create_meshgrid(xhfPer, deltas)
-        YhfPer = self.modified_highfid(datahfPer[:, 0], datahf[:, 1])
+        YhfPer = self.modified_highfid(datahfPer[:, 0], datahfPer[:, 1])
 
         # Prepare low fidelity data
         datalf = self._create_meshgrid(xlf, deltas)

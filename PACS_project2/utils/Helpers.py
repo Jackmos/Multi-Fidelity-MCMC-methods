@@ -159,8 +159,8 @@ def calculate_metrics(output_test: np.ndarray, pred: np.ndarray) -> Tuple[float,
     r2 = 1 - np.sum(np.square(output_test - pred)) / np.sum(np.square(output_test - np.mean(output_test)))
     return test_mse, r2
 
-@jit
-def apply_noise(y_obs: np.ndarray, cov_noise: float) -> np.ndarray:
+#@jit
+def perturbation(y_obs: np.ndarray, cov_noise: float) -> np.ndarray:
     """
     Add noise to the observation data based on a specified covariance.
 
@@ -171,7 +171,7 @@ def apply_noise(y_obs: np.ndarray, cov_noise: float) -> np.ndarray:
     Returns:
     - np.ndarray, the perturbed observation data with added noise.
     """
-    return y_obs + np.random.normal(loc=0.0, scale=cov_noise, size=y_obs.shape)
+    return y_obs + np.random.normal(0.0, cov_noise, y_obs.shape)
 
 
 def setup_prior(mean_prior: np.ndarray, cov_prior: Optional[np.ndarray]) -> multivariate_normal:

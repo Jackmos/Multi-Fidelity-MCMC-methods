@@ -6,7 +6,7 @@ from keras.models import save_model
 import numpy as np
 from matplotlib import pyplot as plt
 from time import perf_counter
-
+import pandas as pd
 
 import tensorflow as tf
 
@@ -35,7 +35,257 @@ import time
 from typing import Tuple
 
 from abc import ABCMeta, abstractstaticmethod, abstractmethod
+
+
+
+
+def save_performance(base_dir, r2_HF_df, mse_HF_df, r2_LF_df, mse_LF_df, U_HF_list, U_LF_list):
+    # Create the directory if it doesn't exist
+    os.makedirs(base_dir, exist_ok=True)
+
+    # File paths
+    r2_HF_path = os.path.join(base_dir, "r2_HF_lhs.txt")
+    mse_HF_path = os.path.join(base_dir, "mse_HF_lhs.txt")
+    r2_LF_path = os.path.join(base_dir, "r2_LF_lhs.txt")
+    mse_LF_path = os.path.join(base_dir, "mse_LF_lhs.txt")
+    U_HF_list_path = os.path.join(base_dir, "U_HF_list.data")
+    U_LF_list_path = os.path.join(base_dir, "U_LF_list.data")
+
+    # Save dataframes to files
+    r2_HF_df.to_csv(r2_HF_path, header=True, index=False, sep="\t", mode="a")
+    mse_HF_df.to_csv(mse_HF_path, header=True, index=False, sep="\t", mode="a")
+    r2_LF_df.to_csv(r2_LF_path, header=True, index=False, sep="\t", mode="a")
+    mse_LF_df.to_csv(mse_LF_path, header=True, index=False, sep="\t", mode="a")
+
+    # Save lists to binary files
+    with open(U_HF_list_path, "wb") as hf_file:
+        pickle.dump(U_HF_list, hf_file)
+
+    with open(U_LF_list_path, "wb") as lf_file:
+        pickle.dump(U_LF_list, lf_file)
+
+
+def save_performance(base_dir, r2_HF_df, mse_HF_df, r2_LF_df, mse_LF_df, U_HF_list, U_LF_list):
+    # Save High-Frequency data
+    save_single_performance(base_dir, r2_HF_df, mse_HF_df, U_HF_list, 
+                            "r2_HF_lhs.txt", "mse_HF_lhs.txt", "U_HF_list.data")
+
+    # Save Low-Frequency data
+    save_single_performance(base_dir, r2_LF_df, mse_LF_df, U_LF_list, 
+                            "r2_LF_lhs.txt", "mse_LF_lhs.txt", "U_LF_list.data")
     
+def save_single_performance(base_dir, r2_df, mse_df, list_data, r2_filename, mse_filename, list_filename):
+    # Create the directory if it doesn't exist
+    os.makedirs(base_dir, exist_ok=True)
+
+    # File paths
+    r2_path = os.path.join(base_dir, r2_filename)
+    mse_path = os.path.join(base_dir, mse_filename)
+    list_path = os.path.join(base_dir, list_filename)
+
+    # Save dataframes to files
+    r2_df.to_csv(r2_path, header=True, index=False, sep="\t", mode="a")
+    mse_df.to_csv(mse_path, header=True, index=False, sep="\t", mode="a")
+
+    # Save list to binary file
+    with open(list_path, "wb") as list_file:
+        pickle.dump(list_data, list_file)
+
+
+
+def create_folder(folder_name):
+    folder_path = os.path.join(os.getcwd(), folder_name)
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        print(f"Folder '{folder_name}' created.")
+    else:
+        print(f"Folder '{folder_name}' already exists.")
+    return folder_path
+
+def shuffle_and_select(data, target, n_samples):
+    perm = np.random.permutation(len(data))
+    return data[perm][:n_samples], target[perm][:n_samples]
+
+
+
+# def plot_results(reaction_test, reaction_train, U_test, U_train, U_pred, model_type, color1, color2, label1, label2):
+#     """
+#     Plot results comparing the ground truth, training data, and predictions.
+#     """
+#     plt.figure()
+    
+#     # Ensure U_train is flattened to match the dimension of reaction_test[:, 0]
+#     plt.plot(reaction_test[:, 0], U_test, color=color1, linestyle="--", linewidth=2.5, label=label1)
+#     plt.plot(reaction_train[:, 0], U_train, "o", markersize=6, color=color1, alpha=0.8, label=f"{model_type} training points")
+#     plt.plot(reaction_test[:, 0], U_pred, color=color2, linestyle="-", linewidth=3, label=label2)
+    
+#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+#     plt.show()
+
+def plot_results(reaction_test, U_test, U_pred, model_type,
+                 reaction_train=None, U_train=None, color1='blue', color2='red', label1='Ground Truth', label2='Prediction'):
+    """
+    Plot results comparing the ground truth, training data (if provided), and predictions.
+    
+    Parameters:
+    - reaction_test: ndarray, test reaction data.
+    - U_test: ndarray, ground truth for test data.
+    - U_pred: ndarray, predicted values for test data.
+    - model_type: str, the type of model used (used for labeling training points).
+    - color1: str, color for the ground truth line and training points. Default is 'blue'.
+    - color2: str, color for the prediction line. Default is 'red'.
+    - label1: str, label for the ground truth line. Default is 'Ground Truth'.
+    - label2: str, label for the prediction line. Default is 'Prediction'.
+    - reaction_train: ndarray, optional, training reaction data. Default is None.
+    - U_train: ndarray, optional, ground truth for training data. Default is None.
+    """
+    plt.figure()
+    
+    # Plot the test data and predictions
+    plt.plot(reaction_test[:, 0], U_test, color=color1, linestyle="--", linewidth=2.5, label=label1)
+    plt.plot(reaction_test[:, 0], U_pred, color=color2, linestyle="-", linewidth=3, label=label2)
+    
+    # Plot the training data if provided
+    if reaction_train is not None and U_train is not None:
+        plt.plot(reaction_train[:, 0], U_train, "o", markersize=6, color=color1, alpha=0.8, label=f"{model_type} training points")
+    
+    # Configure the legend and grid
+    plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+    plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+    plt.show()
+
+
+
+def update_results(df, discretization, diffusion, value, metric):
+    new_entry = {'Discretization': discretization, 'diffusion': diffusion, metric: value}
+    return pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
+
+
+
+
+def select_random_data(reaction_data, U_data, n_samples):
+    """
+    Select a random subset of the data for training or validation.
+    """
+    permutation = np.random.permutation(len(reaction_data))
+    return reaction_data[permutation][:n_samples], U_data[permutation][:n_samples]
+
+def augment_with_sin(reaction_data):
+    """
+    Augment the reaction data with a sinusoidal transformation.
+    """
+    return np.c_[reaction_data, np.abs(np.sin(5 * np.pi * reaction_data[:, 0] - 5 * np.pi / 6))]
+
+# def evaluate_and_plot_network_1(model, reaction_LF_test_original, U_LF_test_original, reaction_LF, U_train_LF, test_mse_LF_list, r2_LF_list):
+#     """
+#     Evaluate the first network in the model and plot the results.
+#     """
+#     ULF = model.model_list[0].prediction(reaction_LF_test_original)
+#     print("Low fidelity NN")
+    
+#     test_mse_LF, r2_LF = model.model_list[0].performance(reaction_LF_test_original, U_LF_test_original)
+#     test_mse_LF_list.append(test_mse_LF)
+#     r2_LF_list.append(r2_LF)
+    
+#     plt.figure()
+#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
+#     plt.plot(reaction_LF[:, 0], U_train_LF, "o", markersize=6, color="#1F77B4", alpha=0.8, label="LF training points")
+#     plt.plot(reaction_LF_test_original[:, 0], ULF, color="#2CA02C", linestyle="-", linewidth=3, label="Predicted LF model")
+#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+#     plt.show()
+
+# def evaluate_and_plot_network_2(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_per_train, test_mse_per_list, r2_per_list):
+#     """
+#     Evaluate the second network in the model and plot the results.
+#     """
+#     input_per = np.concatenate((reaction_HF_test_original, model.model_list[0].prediction(reaction_HF_test_original).reshape(-1, 1)), axis=1)
+#     input_per_train = np.concatenate((reaction_HF, model.model_list[0].prediction(reaction_HF).reshape(-1, 1)), axis=1)
+
+#     print("Second model")
+#     test_mse_per, r2_per = model.model_list[1].performance(input_per, U_HF_test_original)
+#     test_mse_per_list.append(test_mse_per)
+#     r2_per_list.append(r2_per)
+
+#     plt.figure()
+#     plt.plot(reaction_HF_test_original[:, 0], U_HF_test_original, color="#9467BD", linestyle="-", linewidth=2.5, label="HF model")
+#     plt.plot(input_per_train[:, 0], U_HF, "o", markersize=6, color="#9467BD", alpha=0.8, label="HF training points")
+#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
+#     plt.plot(input_per[:, 0], model.model_list[1].prediction(input_per), color="#D62728", linestyle="-", linewidth=3, label="Predicted PER model")
+#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+#     plt.show()
+
+# def evaluate_and_plot_network_3(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_HF_train, test_mse_HF_list, r2_HF_list):
+#     """
+#     Evaluate the third network in the model and plot the results.
+#     """
+#     input_HF = np.concatenate((reaction_HF_test_original, model.model_list[0].prediction(reaction_HF_test_original).reshape(-1, 1)), axis=1)
+#     input_HF = np.concatenate((input_HF, model.model_list[1].prediction(input_HF).reshape(-1, 1)), axis=1)
+
+#     input_HF_train = np.concatenate((reaction_HF, model.model_list[0].prediction(reaction_HF).reshape(-1, 1)), axis=1)
+#     input_HF_train = np.concatenate((input_HF_train, model.model_list[1].prediction(input_HF_train).reshape(-1, 1)), axis=1)
+
+#     print("Third model")
+#     test_mse_HF, r2_HF = model.performance(reaction_HF_test_original, U_HF_test_original)
+#     test_mse_HF_list.append(test_mse_HF)
+#     r2_HF_list.append(r2_HF)
+
+#     plt.figure()
+#     plt.plot(reaction_HF_test_original[:, 0], U_HF_test_original, color="#FF7F0E", linestyle="-", linewidth=2.5, label="HF model")
+#     plt.plot(input_HF_train[:, 0], U_HF, "o", markersize=6, color="#FF7F0E", alpha=0.8, label="HF training points")
+#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
+#     plt.plot(input_HF[:, 0], model.model_list[2].prediction(input_HF), color="#2CA02C", linestyle="-", linewidth=3, label="Predicted HF model")
+#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+#     plt.show()
+
+
+
+def evaluate_network(model, network_index, reaction_test_original, U_test_original, reaction_train, U_train, test_mse_list, r2_list):
+    """
+    Evaluate the network at a specified index in the model and plot the results.
+    
+    Parameters:
+    - model: The model containing the list of networks.
+    - network_index: Index of the network in the model's network list (0-based).
+    - reaction_test_original: Original test input data.
+    - U_test_original: Original test output data.
+    - reaction_train: Original training input data.
+    - U_train: Original training output data.
+    - test_mse_list: List to append the test MSE values.
+    - r2_list: List to append the R^2 values.
+    """
+    
+    # Prepare input data for the current network stage
+    if network_index == 0:
+        input_test = reaction_test_original
+        input_train = reaction_train
+    else:
+        # Concatenate previous network predictions as additional inputs
+        input_test = np.concatenate([reaction_test_original] + [model.model_list[i].prediction(reaction_test_original).reshape(-1, 1) for i in range(network_index)], axis=1)
+        input_train = np.concatenate([reaction_train] + [model.model_list[i].prediction(reaction_train).reshape(-1, 1) for i in range(network_index)], axis=1)
+
+    # Evaluate the current network
+    print(f"Evaluating network {network_index + 1}")
+    test_mse, r2 = model.model_list[network_index].performance(input_test, U_test_original)
+    test_mse_list.append(test_mse)
+    r2_list.append(r2)
+
+    # Plotting
+    plt.figure()
+    plt.plot(reaction_test_original[:, 0], U_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="True Test Data")
+    plt.plot(input_train[:, 0], U_train, "o", markersize=6, color="#FF7F0E", alpha=0.8, label="Training Points")
+    plt.plot(reaction_test_original[:, 0], model.model_list[network_index].prediction(input_test), color="#2CA02C", linestyle="-", linewidth=3, label=f"Predicted Model {network_index + 1}")
+    plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+    plt.grid(True, which='both', linestyle=':', linewidth=0.5)
+    plt.show()
+
+
+
+
 def fft_layer(x):
     return tf.signal.fft(tf.cast(x, dtype=tf.complex64))
 
