@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import sys
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Dense, Input, concatenate
 from tensorflow.keras.models import Model
@@ -39,6 +40,34 @@ def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray,
     y_obs = Yhf[indices[closest_indices]]
     
     return nearest_x, y_obs
+
+
+# def multilevel_observations(levels:int,
+#                             y_obs:np.ndarray,
+#                             parameters:np.ndarray,
+#                             t_eval:np.ndarray,
+#                             final_model
+#                             ) -> Union[np.ndarray, List[np.ndarray]]:
+#     """
+#     In a multilevel case scenario create proper observations for each level
+#     Parameters:
+#     - levels: number of levels of the ML algorithm
+#     - y_obs: numpy array containing "real" observations.
+#     - parameters: 1D numpy array of parameter values to find in datahf.
+#     - t_eval: 2D numpy array of evaluation times.
+#     - final_model: The model object with a method `param_inverse`.
+
+#     Returns:
+#     - y_obs: numpy array  or List (if multilevel) of corresponding y values from Yhf.
+#     """
+#     y=[]
+
+#     for l in range(levels-1):
+#         y.append(final_model.model_list[l]._wrapper_prediction(np.hstack(t_eval,np.tile(parameters,t_eval.shape))))                   #################
+   
+#     return y.append(y_obs)
+
+
 
 
 def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
@@ -106,6 +135,19 @@ def get_algorithm_specific_bounds_tiny(algo: str, levels: int, rwmh_scaling, rwm
         algo_dependent_params['subsampling_rate'] = 1  # generic value
 
     return algo_dependent_params
+
+
+
+
+def multilevel_observations(levels:int,y_obs:np.ndarray,parameters:np.ndarray,t_eval:np.ndarray,final_model)-> List[np.ndarray] :
+    y=[]
+
+    y.append(final_model.model_list[0].prediction(np.hstack((t_eval,np.tile(parameters,t_eval.shape)))))                   #################
+    for l in range(1,levels-1):
+        y.append(final_model.model_list[l].prediction( np.hstack( (np.hstack( (t_eval,np.tile(parameters,t_eval.shape) ) ) ,y[l-1] ) )))
+    y.append(y_obs)
+    return y
+
 
 
 
@@ -191,7 +233,12 @@ def HPO_tinyDA(
         Returns:
             float: The negative of the error to be minimized.
         """
+        y_obs=process_data(datahf, parameters, 
+                               np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1), Yhf)[1]
         
+        if final_model.is_istance_MF():
+            y_obs=multilevel_observations(levels,y_obs,parameters,np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1), final_model) 
+
         # Running the model's parameter inversion method to compute the error
         _, error, _ = final_model.param_inverse(
             mean_prior=mean_prior, 
@@ -201,8 +248,7 @@ def HPO_tinyDA(
             cov_noise=model_kwargs.get('sigma_noise', required_params["sigma_noise"]),
             cov_likelihood=calculate_cov_likelihood(model_kwargs.get('sigma',  required_params["sigma"]), 
                                                     np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1)),
-            y_obs=process_data(datahf, parameters, 
-                               np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1), Yhf)[1],
+            y_obs=y_obs,
             x_real=parameters,
             number_chains=n_chains,
             N=iterations,

@@ -1,2 +1,0 @@
-manca support + grafici
-(e ovviamente un indagine definitiva sugli hiperparametri)

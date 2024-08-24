@@ -174,22 +174,7 @@ def custom_activation(x: tf.Tensor) -> tf.Tensor:
     """
     return x + K.square(K.sin(x))
 
-# class Attention(Layer):
-#     def __init__(self):
-#         super(Attention, self).__init__()
 
-#     def build(self, input_shape):
-#         self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], input_shape[-1]), initializer='random_normal', trainable=True)
-#         self.b = self.add_weight(name='attention_bias', shape=(input_shape[-1],), initializer='zeros', trainable=True)
-#         self.u = self.add_weight(name='context_vector', shape=(input_shape[-1],), initializer='random_normal', trainable=True)
-#         super(Attention, self).build(input_shape)
-
-#     def call(self, inputs):
-#         score = tf.nn.tanh(tf.tensordot(inputs, self.W, axes=1) + self.b)
-#         attention_weights = tf.nn.softmax(tf.tensordot(score, self.u, axes=1), axis=1)
-#         context_vector = attention_weights * inputs
-#         context_vector = tf.reduce_sum(context_vector, axis=1)
-#         return context_vector
 
 def getModel(
     params: Dict[str, Union[int, float, str, bool]], 
@@ -392,6 +377,55 @@ def calculate_cov_likelihood(sigma: float, t_eval: np.ndarray) -> np.ndarray:
     return sigma ** 2 * np.eye(t_eval.shape[0])
 
 
+
+
+def get_algorithm_specific_bounds_tiny(algo: str,  rwmh_scaling, rwmh_cov) -> dict:
+    """
+    In HPO_tinyDA, manage algo dependent parameters .
+
+    Args:
+        algo (str): Algorithm type for the optimization.
+        levels (int): Number of levels in the model.
+        rwmh_scaling: hyperparameter, can be a float (fixed), a tuple (bounds), or None.
+        rwmh_cov:  Covariance matrix for the RWMH proposal distribution.
+        subsampling_rate:  Optional Rate or rates of subsampling the posterior. Default is 1
+
+    Returns:
+        dict: Dictionary with required parameters depending on the algorithm
+    """
+    algo_dependent_params = {}
+
+    if algo == 'MH':  
+        if rwmh_scaling is None:
+            raise ValueError(f"The algorithm '{algo}' requires the parameter 'rwmh_scaling' which is missing.")
+        if rwmh_cov is None:
+            raise ValueError(f"The algorithm '{algo}' requires the parameter 'rwmh_cov' which is missing.")
+        algo_dependent_params['rwmh_scaling'] = rwmh_scaling
+        algo_dependent_params['rwmh_cov'] = rwmh_cov
+
+    elif algo == 'AM':  
+        if rwmh_cov is None:
+            raise ValueError(f"The algorithm '{algo}' requires the parameter 'rwmh_cov' which is missing.")
+        algo_dependent_params['rwmh_cov'] = rwmh_cov
+        algo_dependent_params['rwmh_scaling'] = 1.0  # generic value
+
+    elif algo == 'CN':  
+        if rwmh_scaling is None:
+            raise ValueError(f"The algorithm '{algo}' requires the parameter 'rwmh_scaling' which is missing.")
+        algo_dependent_params['rwmh_scaling'] = rwmh_scaling
+        algo_dependent_params['rwmh_cov'] = 1.  # generic value
+
+    elif algo == 'DREAMZ':  
+        algo_dependent_params['rwmh_scaling'] = 1.0  # generic value
+        algo_dependent_params['rwmh_cov'] =1.  # generic value
+    else:
+        raise ValueError(f"Unrecognized algorithm '{algo}' specified.")
+
+   
+
+    return algo_dependent_params
+
+
 def HPO_tinyDA(
     datahf: np.ndarray, 
     mean_prior: np.ndarray,
@@ -406,13 +440,16 @@ def HPO_tinyDA(
     n_chains: int, 
     final_model,  # The model class instance with a method 'param_inverse'
     algo: str, 
+    domain:Tuple[float,float],
     levels: int, 
     force_sequential: bool,
-    sigma_noise_bounds: Tuple[float, float],  # Bounds for sigma_noise as a tuple (min, max)
-    n_data_bounds: Tuple[int, int],           # Bounds for n_data as a tuple (min, max)
-    sigma_bounds: Tuple[float, float],        # Bounds for sigma as a tuple (min, max)
-    rwmh_scaling_bounds: Tuple[float, float],  # Bounds for rwmh_scaling as a tuple (min, max)
-    forward_low_fidelity: Optional[Callable] = None
+    sigma_noise: Tuple[float, float],  # Bounds for sigma_noise as a tuple (min, max)
+    n_data: Tuple[int, int],           # Bounds for n_data as a tuple (min, max)
+    sigma: Tuple[float, float],        # Bounds for sigma as a tuple (min, max)
+    rwmh_scaling: Tuple[float, float],  # Bounds for rwmh_scaling as a tuple (min, max)
+    forward_low_fidelity: Optional[Callable] = None,
+    init_points:int=5,
+    n_iter:int=25
 ) -> Tuple[float, int, float, float]:
     """
     Perform hyperparameter optimization using Bayesian Optimization to minimize the error
@@ -441,69 +478,93 @@ def HPO_tinyDA(
     Returns:
         Tuple[float, int, float, float]: The optimal values for sigma_noise, n_data, sigma, and rwmh_scaling.
     """
+        # List of required parameters
+    # List of required parameters
+    required_params = {
+        'n_data': n_data,
+        'sigma_noise': sigma_noise,
+        'sigma': sigma
+    }
     
-    def evaluate_model(sigma_noise: float, n_data: int, sigma: float, rwmh_scaling: float) -> float:
+    # Checking if required parameters are provided
+    for param_name, param_value in required_params.items():
+        if param_value is None:
+            raise ValueError(f"The required parameter '{param_name}' is missing.")
+    
+    # Check algorithm-dependent parameters
+    algo_dependent_params = get_algorithm_specific_bounds_tiny(algo, rwmh_scaling, rwmh_cov, )
+
+    def evaluate_model(**model_kwargs) -> float:
         """
         Objective function that runs the simulation and returns the negative error for minimization.
 
         Args:
-            sigma_noise (float): Noise standard deviation for the covariance noise matrix.
-            n_data (int): Number of data points to be used in the simulation.
-            sigma (float): Parameter used in the covariance likelihood calculation.
-            rwmh_scaling (float): Scaling factor for the Random Walk Metropolis-Hastings algorithm.
+            **model_kwargs: Hyperparameters passed to the param_inverse method.
 
         Returns:
             float: The negative of the error to be minimized.
         """
-        
+        y_obs=process_data(datahf, parameters, 
+                               np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1), Yhf)[1]
+
         # Running the model's parameter inversion method to compute the error
         _, error, _ = final_model.param_inverse(
             mean_prior=mean_prior, 
-            x_data = np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), int(n_data)).reshape(-1, 1),  # Generate evaluation times
+            x_data=np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data', required_params["n_data"]))).reshape(-1, 1),  
             max_par=max(datahf[:, 1]), 
-            cov_prior=cov_prior, 
-            cov_noise=sigma_noise,
-            cov_likelihood=calculate_cov_likelihood(sigma, np.linspace(0., 5., int(n_data)).reshape(-1, 1)),
-            y_obs=process_data(datahf, parameters, np.linspace(np.min(datahf[:,0]), np.max(datahf[:,0]), int(n_data)).reshape(-1, 1), Yhf)[1],
+            cov_prior=cov_prior,
+            cov_noise=model_kwargs.get('sigma_noise', required_params["sigma_noise"]),
+            cov_likelihood=calculate_cov_likelihood(model_kwargs.get('sigma',  required_params["sigma"]), 
+                                                    np.linspace(domain[0], domain[1], int(model_kwargs.get('n_data',  required_params["n_data"]))).reshape(-1, 1)),
+            y_obs=y_obs,
             x_real=parameters,
             number_chains=n_chains,
             N=iterations,
             burn_in=burnin,
             levels=levels, 
             diagnostic=True, 
-            rwmh_cov=rwmh_cov, 
-            rmwh_scaling=rwmh_scaling,
+            rwmh_cov=model_kwargs.get('rwmh_cov', algo_dependent_params["rwmh_cov"]), 
+            rmwh_scaling=model_kwargs.get('rwmh_scaling', algo_dependent_params["rwmh_scaling"]),
             rwmh_adaptive=rwmh_adaptive, 
             algo=algo, 
             forward_low_fidelity=forward_low_fidelity,
             force_sequential=force_sequential,
-            fwd_LSTM_folder=fwd_LSTM_folder        )
-        
+            fwd_LSTM_folder=fwd_LSTM_folder
+        )
+
+
+
+
+
         return -error  # Return the negative error for minimization
+    # Define parameter bounds for the Bayesian Optimization based on **kwargs
+    pbounds = {k: v for k, v in required_params.items() if isinstance(v, tuple)}  
+    pbounds.update({k: v for k, v in algo_dependent_params.items() if isinstance(v, tuple)})
 
-    # Define parameter bounds for the Bayesian Optimization based on user input
-    pbounds = {
-        'sigma_noise': sigma_noise_bounds,  # Bounds for sigma_noise
-        'n_data': n_data_bounds,            # Bounds for n_data
-        'sigma': sigma_bounds,              # Bounds for sigma
-        'rwmh_scaling': rwmh_scaling_bounds # Bounds for rwmh_scaling
-    }
+    # Check if there are parameters to optimize
+    if pbounds:
+        # Initialize the Bayesian Optimizer with the objective function and parameter bounds
+        optimizer = BayesianOptimization(
+            f=evaluate_model,
+            pbounds=pbounds,
+            random_state=42
+        )
 
-    # Initialize the Bayesian Optimizer with the objective function and parameter bounds
-    optimizer = BayesianOptimization(
-        f=evaluate_model,
-        pbounds=pbounds,
-        random_state=42
-    )
+        # Run the optimization process
+        optimizer.maximize(init_points=init_points, n_iter=n_iter)
 
-    # Run the optimization process
-    optimizer.maximize(init_points=5, n_iter=25)
+        # Retrieve the optimal parameter values
+        best_params = optimizer.max['params']
 
-    # Retrieve the optimal parameter values
-    best_params = optimizer.max['params']
+        # Merge optimized parameters with fixed ones from kwargs
+        best_params = {**best_params, **{k: v for k, v in required_params.items() if not isinstance(v, tuple)}}  
+        best_params.update({k: v for k, v in algo_dependent_params.items() if not isinstance(v, tuple)})  
+    else:
+        # No optimization required, use fixed values from kwargs
+        best_params = {**required_params, **algo_dependent_params}
 
-    # Return the best parameters found
-    return best_params['sigma_noise'], int(best_params['n_data']), best_params['sigma'], best_params['rwmh_scaling']
+    return best_params
+
 
 
 def run_param_inverse(

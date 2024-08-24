@@ -257,6 +257,9 @@ class INetwork(ABC):
 
         self._n = value
 
+    def is_istance_MF(self):
+        return isinstance(self,MultiFidelity)
+
 
     def _input_wrapper_prediction(self, x_test: np.ndarray, multi_input: bool = False) -> np.ndarray:
         """
@@ -393,7 +396,12 @@ class INetwork(ABC):
         if y_obs is None:
             y_obs = simulate_observations(x_real, cov_noise, self._wrapper_prediction)
         else:
-            y_obs = perturbation(y_obs, cov_noise).flatten()
+            if isinstance(y_obs,List):
+                # multilevel case
+                for l in range(len(y_obs)):
+                    y_obs[l] = perturbation(y_obs[l], cov_noise).flatten()
+            else:
+                y_obs = perturbation(y_obs, cov_noise).flatten()
 
         # Multi-level model handling
         if levels > 1:
@@ -406,7 +414,7 @@ class INetwork(ABC):
                 self.model_list[l]._set_level(x_data=x_data, prev_steps=self.model_list[0:l], level=l+1)
                 
             # Setup multi-level model hierarchy
-            my_loglike = [setup_likelihood(y_obs, cov_likelihood, cov_noise, dim) for _ in range(levels)]
+            my_loglike = [setup_likelihood(y_obs[l], cov_likelihood, cov_noise, dim) for l in range(levels)]
             my_posterior = [tda.Posterior(my_prior, my_loglike[i], self.model_list[i]._wrapper_prediction) for i in range(levels)]
         else:
             # Single level setup
