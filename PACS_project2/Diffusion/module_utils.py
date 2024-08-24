@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from time import perf_counter
 import pandas as pd
+import pickle
 
 import tensorflow as tf
 
@@ -32,49 +33,60 @@ import tinyDA as tda
 from scipy.stats import multivariate_normal,beta
 import arviz as az
 import time
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 from abc import ABCMeta, abstractstaticmethod, abstractmethod
 
 
 
 
-def save_performance(base_dir, r2_HF_df, mse_HF_df, r2_LF_df, mse_LF_df, U_HF_list, U_LF_list):
-    # Create the directory if it doesn't exist
-    os.makedirs(base_dir, exist_ok=True)
-
-    # File paths
-    r2_HF_path = os.path.join(base_dir, "r2_HF_lhs.txt")
-    mse_HF_path = os.path.join(base_dir, "mse_HF_lhs.txt")
-    r2_LF_path = os.path.join(base_dir, "r2_LF_lhs.txt")
-    mse_LF_path = os.path.join(base_dir, "mse_LF_lhs.txt")
-    U_HF_list_path = os.path.join(base_dir, "U_HF_list.data")
-    U_LF_list_path = os.path.join(base_dir, "U_LF_list.data")
-
-    # Save dataframes to files
-    r2_HF_df.to_csv(r2_HF_path, header=True, index=False, sep="\t", mode="a")
-    mse_HF_df.to_csv(mse_HF_path, header=True, index=False, sep="\t", mode="a")
-    r2_LF_df.to_csv(r2_LF_path, header=True, index=False, sep="\t", mode="a")
-    mse_LF_df.to_csv(mse_LF_path, header=True, index=False, sep="\t", mode="a")
-
-    # Save lists to binary files
-    with open(U_HF_list_path, "wb") as hf_file:
-        pickle.dump(U_HF_list, hf_file)
-
-    with open(U_LF_list_path, "wb") as lf_file:
-        pickle.dump(U_LF_list, lf_file)
-
-
-def save_performance(base_dir, r2_HF_df, mse_HF_df, r2_LF_df, mse_LF_df, U_HF_list, U_LF_list):
-    # Save High-Frequency data
+def save_performance(base_dir: str, 
+                     r2_HF_df: pd.DataFrame, 
+                     mse_HF_df: pd.DataFrame, 
+                     r2_LF_df: pd.DataFrame, 
+                     mse_LF_df: pd.DataFrame, 
+                     U_HF_list: List[float], 
+                     U_LF_list: List[float]) -> None:
+    """
+    Saves performance metrics and lists to specified files.
+    
+    Parameters:
+    - base_dir: Directory where the files will be saved.
+    - r2_HF_df: DataFrame containing high-fidelity R2 values.
+    - mse_HF_df: DataFrame containing high-fidelity MSE values.
+    - r2_LF_df: DataFrame containing low-fidelity R2 values.
+    - mse_LF_df: DataFrame containing low-fidelity MSE values.
+    - U_HF_list: List of high-fidelity U values.
+    - U_LF_list: List of low-fidelity U values.
+    """
+    # Save High-Fidelity data
     save_single_performance(base_dir, r2_HF_df, mse_HF_df, U_HF_list, 
                             "r2_HF_lhs.txt", "mse_HF_lhs.txt", "U_HF_list.data")
 
-    # Save Low-Frequency data
+    # Save Low-Fidelity data
     save_single_performance(base_dir, r2_LF_df, mse_LF_df, U_LF_list, 
                             "r2_LF_lhs.txt", "mse_LF_lhs.txt", "U_LF_list.data")
     
-def save_single_performance(base_dir, r2_df, mse_df, list_data, r2_filename, mse_filename, list_filename):
+
+def save_single_performance(base_dir: str, 
+                            r2_df: pd.DataFrame, 
+                            mse_df: pd.DataFrame, 
+                            list_data: List[float], 
+                            r2_filename: str, 
+                            mse_filename: str, 
+                            list_filename: str) -> None:
+    """
+    Saves a single set of performance metrics and a list to specified files.
+    
+    Parameters:
+    - base_dir: Directory where the files will be saved.
+    - r2_df: DataFrame containing R2 values.
+    - mse_df: DataFrame containing MSE values.
+    - list_data: List of values to be saved in binary format.
+    - r2_filename: Filename for saving the R2 DataFrame.
+    - mse_filename: Filename for saving the MSE DataFrame.
+    - list_filename: Filename for saving the list in binary format.
+    """
     # Create the directory if it doesn't exist
     os.makedirs(base_dir, exist_ok=True)
 
@@ -83,7 +95,7 @@ def save_single_performance(base_dir, r2_df, mse_df, list_data, r2_filename, mse
     mse_path = os.path.join(base_dir, mse_filename)
     list_path = os.path.join(base_dir, list_filename)
 
-    # Save dataframes to files
+    # Save DataFrames to files
     r2_df.to_csv(r2_path, header=True, index=False, sep="\t", mode="a")
     mse_df.to_csv(mse_path, header=True, index=False, sep="\t", mode="a")
 
@@ -93,7 +105,16 @@ def save_single_performance(base_dir, r2_df, mse_df, list_data, r2_filename, mse
 
 
 
-def create_folder(folder_name):
+def create_folder(folder_name: str) -> str:
+    """
+    Creates a folder in the current working directory if it doesn't exist.
+    
+    Parameters:
+    - folder_name: Name of the folder to be created.
+    
+    Returns:
+    - folder_path: Path to the created or existing folder.
+    """
     folder_path = os.path.join(os.getcwd(), folder_name)
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
@@ -102,31 +123,39 @@ def create_folder(folder_name):
         print(f"Folder '{folder_name}' already exists.")
     return folder_path
 
-def shuffle_and_select(data, target, n_samples):
+
+#@jit(nopython=True)
+def shuffle_and_select(data: np.ndarray, 
+                       target: np.ndarray, 
+                       n_samples: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Shuffles the data and target arrays, and selects a subset of samples.
+    
+    Parameters:
+    - data: Array of data samples.
+    - target: Array of target values.
+    - n_samples: Number of samples to select.
+    
+    Returns:
+    - A tuple of selected data and target arrays.
+    """
+    assert len(data) == len(target), "Data and target arrays must have the same length"
     perm = np.random.permutation(len(data))
     return data[perm][:n_samples], target[perm][:n_samples]
 
 
-
-# def plot_results(reaction_test, reaction_train, U_test, U_train, U_pred, model_type, color1, color2, label1, label2):
-#     """
-#     Plot results comparing the ground truth, training data, and predictions.
-#     """
-#     plt.figure()
-    
-#     # Ensure U_train is flattened to match the dimension of reaction_test[:, 0]
-#     plt.plot(reaction_test[:, 0], U_test, color=color1, linestyle="--", linewidth=2.5, label=label1)
-#     plt.plot(reaction_train[:, 0], U_train, "o", markersize=6, color=color1, alpha=0.8, label=f"{model_type} training points")
-#     plt.plot(reaction_test[:, 0], U_pred, color=color2, linestyle="-", linewidth=3, label=label2)
-    
-#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
-#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
-#     plt.show()
-
-def plot_results(reaction_test, U_test, U_pred, model_type,
-                 reaction_train=None, U_train=None, color1='blue', color2='red', label1='Ground Truth', label2='Prediction'):
+def plot_results(reaction_test: np.ndarray, 
+                 U_test: np.ndarray, 
+                 U_pred: np.ndarray, 
+                 model_type: str,
+                 reaction_train: Optional[np.ndarray] = None, 
+                 U_train: Optional[np.ndarray] = None, 
+                 color1: str = 'blue', 
+                 color2: str = 'red', 
+                 label1: str = 'Solution', 
+                 label2: str = 'Prediction') -> None:
     """
-    Plot results comparing the ground truth, training data (if provided), and predictions.
+    Plot results comparing the true solution, training data (if provided), and predictions.
     
     Parameters:
     - reaction_test: ndarray, test reaction data.
@@ -141,7 +170,7 @@ def plot_results(reaction_test, U_test, U_pred, model_type,
     - U_train: ndarray, optional, ground truth for training data. Default is None.
     """
     plt.figure()
-    
+
     # Plot the test data and predictions
     plt.plot(reaction_test[:, 0], U_test, color=color1, linestyle="--", linewidth=2.5, label=label1)
     plt.plot(reaction_test[:, 0], U_pred, color=color2, linestyle="-", linewidth=3, label=label2)
@@ -156,107 +185,80 @@ def plot_results(reaction_test, U_test, U_pred, model_type,
     plt.show()
 
 
-
-def update_results(df, discretization, diffusion, value, metric):
+def update_results(df: pd.DataFrame, 
+                   discretization: str, 
+                   diffusion: float, 
+                   value: float, 
+                   metric: str) -> pd.DataFrame:
+    """
+    Update the DataFrame with new results.
+    
+    Parameters:
+    - df: The DataFrame to update.
+    - discretization: Discretization method used.
+    - diffusion: Diffusion coefficient.
+    - value: The metric value to add.
+    - metric: The name of the metric to update.
+    
+    Returns:
+    - Updated DataFrame with the new entry added.
+    """
     new_entry = {'Discretization': discretization, 'diffusion': diffusion, metric: value}
     return pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
 
 
-
-
-
-def select_random_data(reaction_data, U_data, n_samples):
+def select_random_data(reaction_data: np.ndarray, 
+                       U_data: np.ndarray, 
+                       n_samples: int) -> Tuple[np.ndarray, np.ndarray]:
     """
     Select a random subset of the data for training or validation.
+    
+    Parameters:
+    - reaction_data: ndarray, full dataset of reaction data.
+    - U_data: ndarray, full dataset of U values corresponding to the reaction data.
+    - n_samples: Number of samples to select.
+    
+    Returns:
+    - Tuple containing the randomly selected reaction data and corresponding U values.
     """
     permutation = np.random.permutation(len(reaction_data))
     return reaction_data[permutation][:n_samples], U_data[permutation][:n_samples]
 
-def augment_with_sin(reaction_data):
+def augment_with_sin(reaction_data: np.ndarray) -> np.ndarray:
     """
-    Augment the reaction data with a sinusoidal transformation.
+    Augment the reaction data with a sinusoidal transformation. 
+    Used to improve Neural NEtwork regression performance
+    
+    Parameters:
+    - reaction_data: ndarray, the input reaction data to augment.
+    
+    Returns:
+    - Augmented ndarray with an additional sinusoidal feature.
     """
     return np.c_[reaction_data, np.abs(np.sin(5 * np.pi * reaction_data[:, 0] - 5 * np.pi / 6))]
 
-# def evaluate_and_plot_network_1(model, reaction_LF_test_original, U_LF_test_original, reaction_LF, U_train_LF, test_mse_LF_list, r2_LF_list):
-#     """
-#     Evaluate the first network in the model and plot the results.
-#     """
-#     ULF = model.model_list[0].prediction(reaction_LF_test_original)
-#     print("Low fidelity NN")
-    
-#     test_mse_LF, r2_LF = model.model_list[0].performance(reaction_LF_test_original, U_LF_test_original)
-#     test_mse_LF_list.append(test_mse_LF)
-#     r2_LF_list.append(r2_LF)
-    
-#     plt.figure()
-#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
-#     plt.plot(reaction_LF[:, 0], U_train_LF, "o", markersize=6, color="#1F77B4", alpha=0.8, label="LF training points")
-#     plt.plot(reaction_LF_test_original[:, 0], ULF, color="#2CA02C", linestyle="-", linewidth=3, label="Predicted LF model")
-#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
-#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
-#     plt.show()
-
-# def evaluate_and_plot_network_2(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_per_train, test_mse_per_list, r2_per_list):
-#     """
-#     Evaluate the second network in the model and plot the results.
-#     """
-#     input_per = np.concatenate((reaction_HF_test_original, model.model_list[0].prediction(reaction_HF_test_original).reshape(-1, 1)), axis=1)
-#     input_per_train = np.concatenate((reaction_HF, model.model_list[0].prediction(reaction_HF).reshape(-1, 1)), axis=1)
-
-#     print("Second model")
-#     test_mse_per, r2_per = model.model_list[1].performance(input_per, U_HF_test_original)
-#     test_mse_per_list.append(test_mse_per)
-#     r2_per_list.append(r2_per)
-
-#     plt.figure()
-#     plt.plot(reaction_HF_test_original[:, 0], U_HF_test_original, color="#9467BD", linestyle="-", linewidth=2.5, label="HF model")
-#     plt.plot(input_per_train[:, 0], U_HF, "o", markersize=6, color="#9467BD", alpha=0.8, label="HF training points")
-#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
-#     plt.plot(input_per[:, 0], model.model_list[1].prediction(input_per), color="#D62728", linestyle="-", linewidth=3, label="Predicted PER model")
-#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
-#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
-#     plt.show()
-
-# def evaluate_and_plot_network_3(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_HF_train, test_mse_HF_list, r2_HF_list):
-#     """
-#     Evaluate the third network in the model and plot the results.
-#     """
-#     input_HF = np.concatenate((reaction_HF_test_original, model.model_list[0].prediction(reaction_HF_test_original).reshape(-1, 1)), axis=1)
-#     input_HF = np.concatenate((input_HF, model.model_list[1].prediction(input_HF).reshape(-1, 1)), axis=1)
-
-#     input_HF_train = np.concatenate((reaction_HF, model.model_list[0].prediction(reaction_HF).reshape(-1, 1)), axis=1)
-#     input_HF_train = np.concatenate((input_HF_train, model.model_list[1].prediction(input_HF_train).reshape(-1, 1)), axis=1)
-
-#     print("Third model")
-#     test_mse_HF, r2_HF = model.performance(reaction_HF_test_original, U_HF_test_original)
-#     test_mse_HF_list.append(test_mse_HF)
-#     r2_HF_list.append(r2_HF)
-
-#     plt.figure()
-#     plt.plot(reaction_HF_test_original[:, 0], U_HF_test_original, color="#FF7F0E", linestyle="-", linewidth=2.5, label="HF model")
-#     plt.plot(input_HF_train[:, 0], U_HF, "o", markersize=6, color="#FF7F0E", alpha=0.8, label="HF training points")
-#     plt.plot(reaction_LF_test_original[:, 0], U_LF_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="LF model")
-#     plt.plot(input_HF[:, 0], model.model_list[2].prediction(input_HF), color="#2CA02C", linestyle="-", linewidth=3, label="Predicted HF model")
-#     plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
-#     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
-#     plt.show()
 
 
-
-def evaluate_network(model, network_index, reaction_test_original, U_test_original, reaction_train, U_train, test_mse_list, r2_list):
+def evaluate_network(model: Any, 
+                     network_index: int, 
+                     reaction_test_original: np.ndarray, 
+                     U_test_original: np.ndarray, 
+                     reaction_train: np.ndarray, 
+                     U_train: np.ndarray, 
+                     test_mse_list: List[float], 
+                     r2_list: List[float]) -> None:
     """
     Evaluate the network at a specified index in the model and plot the results.
     
     Parameters:
     - model: The model containing the list of networks.
     - network_index: Index of the network in the model's network list (0-based).
-    - reaction_test_original: Original test input data.
-    - U_test_original: Original test output data.
-    - reaction_train: Original training input data.
-    - U_train: Original training output data.
-    - test_mse_list: List to append the test MSE values.
-    - r2_list: List to append the R^2 values.
+    - reaction_test_original: Original test input data (ndarray).
+    - U_test_original: Original test output data (ndarray).
+    - reaction_train: Original training input data (ndarray).
+    - U_train: Original training output data (ndarray).
+    - test_mse_list: List to append the test MSE values (List[float]).
+    - r2_list: List to append the R^2 values (List[float]).
     """
     
     # Prepare input data for the current network stage
@@ -265,8 +267,12 @@ def evaluate_network(model, network_index, reaction_test_original, U_test_origin
         input_train = reaction_train
     else:
         # Concatenate previous network predictions as additional inputs
-        input_test = np.concatenate([reaction_test_original] + [model.model_list[i].prediction(reaction_test_original).reshape(-1, 1) for i in range(network_index)], axis=1)
-        input_train = np.concatenate([reaction_train] + [model.model_list[i].prediction(reaction_train).reshape(-1, 1) for i in range(network_index)], axis=1)
+        input_test = np.concatenate(
+            [reaction_test_original] + [model.model_list[i].prediction(reaction_test_original).reshape(-1, 1) 
+                                        for i in range(network_index)], axis=1)
+        input_train = np.concatenate(
+            [reaction_train] + [model.model_list[i].prediction(reaction_train).reshape(-1, 1) 
+                                for i in range(network_index)], axis=1)
 
     # Evaluate the current network
     print(f"Evaluating network {network_index + 1}")
@@ -278,34 +284,34 @@ def evaluate_network(model, network_index, reaction_test_original, U_test_origin
     plt.figure()
     plt.plot(reaction_test_original[:, 0], U_test_original, color="#1F77B4", linestyle="--", linewidth=2.5, label="True Test Data")
     plt.plot(input_train[:, 0], U_train, "o", markersize=6, color="#FF7F0E", alpha=0.8, label="Training Points")
-    plt.plot(reaction_test_original[:, 0], model.model_list[network_index].prediction(input_test), color="#2CA02C", linestyle="-", linewidth=3, label=f"Predicted Model {network_index + 1}")
-    plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, facecolor="white", edgecolor="black")
+    plt.plot(reaction_test_original[:, 0], model.model_list[network_index].prediction(input_test), 
+             color="#2CA02C", linestyle="-", linewidth=3, label=f"Predicted Model {network_index + 1}")
+    plt.legend(prop={"size": 9}, loc="best", frameon=True, fancybox=False, shadow=False, 
+               facecolor="white", edgecolor="black")
     plt.grid(True, which='both', linestyle=':', linewidth=0.5)
     plt.show()
 
 
 
 
-def fft_layer(x):
-    return tf.signal.fft(tf.cast(x, dtype=tf.complex64))
-
-def ifft_layer(x):
-    return tf.signal.ifft(x)
-
-
-# Manually specify output shape to avoid NotImplementedError
-def fft_output_shape(input_shape):
-    return input_shape
-
-def ifft_output_shape(input_shape):
-    return input_shape
-
 class FourierLayer(Layer):
-    def __init__(self, output_dim, **kwargs):
+    def __init__(self, output_dim: int, **kwargs) -> None:
+        """
+        Custom Keras Layer implementing Fourier features.
+
+        Parameters:
+        - output_dim: int, the dimensionality of the output.
+        """
         self.output_dim = output_dim
         super(FourierLayer, self).__init__(**kwargs)
 
-    def build(self, input_shape):
+    def build(self, input_shape: Tuple[int]) -> None:
+        """
+        Build the layer by initializing weights.
+
+        Parameters:
+        - input_shape: tuple, the shape of the input tensor.
+        """
         self.kernel_sin = self.add_weight(name='kernel_sin',
                                           shape=(self.output_dim,),  
                                           initializer='glorot_uniform',
@@ -316,89 +322,33 @@ class FourierLayer(Layer):
                                           trainable=True)
         super(FourierLayer, self).build(input_shape)
 
-    def call(self, x):
+    def call(self, x: tf.Tensor) -> tf.Tensor:
+        """
+        Perform the forward pass and apply Fourier transformation.
+
+        Parameters:
+        - x: tf.Tensor, input tensor.
+
+        Returns:
+        - tf.Tensor, the transformed output tensor.
+        """
         result = tf.sin(tf.multiply(x, self.kernel_sin)) + tf.cos(tf.multiply(x, self.kernel_cos))
         return result
 
-    def compute_output_shape(self, input_shape):
+    def compute_output_shape(self, input_shape: Tuple[int]) -> Tuple[int]:
+        """
+        Compute the output shape of the layer.
+
+        Parameters:
+        - input_shape: tuple, the shape of the input tensor.
+
+        Returns:
+        - tuple, the shape of the output tensor.
+        """
         return input_shape
 
-# class FFTLayer(Layer):
-#     def __init__(self, output_dim, **kwargs):
-#         self.output_dim = output_dim
-#         super(FFTLayer, self).__init__(**kwargs)
 
-#     def build(self, input_shape):
-#         # Initialize weights (if any), here just for structure, as FFT itself doesn't use learnable weights
-#         super(FFTLayer, self).build(input_shape)
 
-#     def call(self, x):
-#         # Cast input to complex64 and apply FFT
-#         x_complex = tf.cast(x, dtype=tf.complex64)
-#         fft_result = tf.signal.fft(x_complex)
-#         # Return both magnitude and phase
-#         magnitude = tf.math.abs(fft_result)
-#         phase = tf.math.angle(fft_result)
-#         return tf.concat([magnitude, phase], axis=-1)
-
-#     def compute_output_shape(self, input_shape):
-#         return input_shape
-
-# class IFFTLayer(Layer):
-#     def __init__(self, output_dim, **kwargs):
-#         self.output_dim = output_dim
-#         super(IFFTLayer, self).__init__(**kwargs)
-
-#     def build(self, input_shape):
-#         # Initialize weights (if any), here just for structure, as IFFT itself doesn't use learnable weights
-#         super(IFFTLayer, self).build(input_shape)
-
-#     def call(self, x):
-#         # Split magnitude and phase
-#         magnitude = x[:, :x.shape[-1] // 2]
-#         phase = x[:, x.shape[-1] // 2:]
-#         # Reconstruct complex numbers
-#         real = magnitude * tf.math.cos(phase)
-#         imag = magnitude * tf.math.sin(phase)
-#         x_complex = tf.complex(real, imag)
-#         # Apply IFFT
-#         ifft_result = tf.signal.ifft(x_complex)
-#         return tf.math.real(ifft_result)  # Return only the real part
-
-#     def compute_output_shape(self, input_shape):
-#         return input_shape
-
-class IFFTLayer(Layer):
-    def __init__(self, output_dim, **kwargs):
-        self.output_dim = output_dim
-        super(IFFTLayer, self).__init__(**kwargs)
-
-    def call(self, inputs):
-        # Applicare la Trasformata Inversa di Fourier
-        inputs_complex = tf.cast(inputs, dtype=tf.complex64)
-        ifft_result = tf.signal.ifft(inputs_complex)
-        # Ritornare solo la parte reale
-        return tf.math.real(ifft_result)
-
-    def compute_output_shape(self, input_shape):
-        # Assicurati che la dimensione dell'output sia coerente con output_dim
-        return (input_shape[0], self.output_dim)
-
-class FFTLayer(Layer):
-    def __init__(self, output_dim, **kwargs):
-        self.output_dim = output_dim
-        super(FFTLayer, self).__init__(**kwargs)
-
-    def call(self, inputs):
-        # Applicare la Trasformata di Fourier
-        inputs_complex = tf.cast(inputs, dtype=tf.complex64)
-        fft_result = tf.signal.fft(inputs_complex)
-        # Ritornare solo la parte reale
-        return tf.math.real(fft_result)
-
-    def compute_output_shape(self, input_shape):
-        # Assicurati che la dimensione dell'output sia coerente con output_dim
-        return (input_shape[0], self.output_dim)
 # Custom Activation Function
 def custom_activation(x: tf.Tensor) -> tf.Tensor:
     """
@@ -413,13 +363,30 @@ def custom_activation(x: tf.Tensor) -> tf.Tensor:
     return x + K.square(K.sin(x))
 
 
-def sinusoidal_activation(x):
+def sinusoidal_activation(x: K.tensor) -> K.tensor:
+    """
+    Custom sinusoidal activation function.
+
+    Parameters:
+    - x: K.tensor, input tensor.
+
+    Returns:
+    - K.tensor, the output tensor after applying the sinusoidal activation.
+    """
     return K.square(K.sin(x))
 
-def  normalization(x):
-    return (x - np.min(x)) / (
-    np.max(x) - np.min(x)
-)
+
+def normalization(x: np.ndarray) -> np.ndarray:
+    """
+    Normalizes the input array to the range [0, 1].
+
+    Parameters:
+    - x: np.ndarray, input array.
+
+    Returns:
+    - np.ndarray, normalized array.
+    """
+    return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 def import_data(name: str) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -495,7 +462,7 @@ def getOpti(name: str, lr: float) -> tf.keras.optimizers.Optimizer:
 
 
 def add_noise(noise_std_data: np.ndarray, 
-              noise_sta_output: np.ndarray, 
+              noise_std_output: np.ndarray, 
               data: np.ndarray, 
               output: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -504,32 +471,28 @@ def add_noise(noise_std_data: np.ndarray,
 
     Args:
         noise_std_data (np.ndarray): Standard deviations for noise to be added to the data.
-        noise_sta_output (np.ndarray): Standard deviations for noise to be added to the output.
+        noise_std_output (np.ndarray): Standard deviations for noise to be added to the output.
         data (np.ndarray): The original data array.
         output (np.ndarray): The original output array.
 
     Returns:
         Tuple[np.ndarray, np.ndarray]: Tuple containing the noisy data and output arrays.
     """
-    output_flag = output.copy()  # Initialize the output_flag with the original output
-    data_flag = data.copy()      # Initialize the data_flag with the original data
+    noisy_output = output.copy()  # Initialize with the original output
+    noisy_data = data.copy()      # Initialize with the original data
 
-    # Loop over each standard deviation pair and add noise to the data and output
-    for std1, std2 in zip(noise_std_data, noise_sta_output):
-        # Generate Gaussian noise with mean 0 and standard deviation std1 for the output
-        noise_1 = np.random.normal(0, std1, output.shape[0])
-        # Generate Gaussian noise with mean 0 and standard deviation std2 for the data
-        noise_2 = np.random.normal(0, std2, data.shape)
+    # Add Gaussian noise to the data and output based on provided standard deviations
+    for std_data, std_output in zip(noise_std_data, noise_std_output):
+        # Generate Gaussian noise for the output
+        output_noise = np.random.normal(0, std_output, output.shape)
+        # Generate Gaussian noise for the data
+        data_noise = np.random.normal(0, std_data, data.shape)
         
-        # Add the noise to the original output and data
-        temp1 = output + noise_1[:, np.newaxis]
-        temp2 = data + noise_2
-        
-        # Concatenate the noisy data to the original arrays
-        output_flag = np.concatenate((output_flag, temp1), axis=0)
-        data_flag = np.concatenate((data_flag, temp2), axis=0)
+        # Add the noise to the original data and output
+        noisy_output = np.concatenate((noisy_output, output + output_noise), axis=0)
+        noisy_data = np.concatenate((noisy_data, data + data_noise), axis=0)
 
-    return output_flag, data_flag
+    return noisy_output, noisy_data
 
 
 
@@ -667,22 +630,6 @@ def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Mode
         )(hiddenper)
         
         output = Dense(units=num_outputs, activation="linear", name="HFper")(hiddenper2)
-
-
-
-                
-        # # Applicazione della FFT
-        # fft_layer = FFTLayer(output_dim=64)(inputs)
-
-        # # Strati Densi per modificare le componenti frequenziali
-        # hidden = Dense(units=64, activation='relu', kernel_regularizer=l2(params["l2weight"]), kernel_initializer=params["kernel_init"])(fft_layer)
-        # hidden = Dense(units=64, activation='relu', kernel_regularizer=l2(params["l2weight"]), kernel_initializer=params["kernel_init"])(hidden)
-
-        # # Applicazione dell'IFFT
-        # ifft_layer = IFFTLayer(output_dim=64)(hidden)
-
-        # # Output del modello
-        # output = Dense(units=num_outputs, activation="linear", name="output_hf")(ifft_layer)
 
 
     elif name == "Inter":

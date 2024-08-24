@@ -1,0 +1,31 @@
+MCMC Summary Statistics:
+Estimated Parameters (mean):
+x0    2.135
+x1    1.031
+x2    0.636
+x3    1.582
+Name: mean, dtype: float64
+Standard Deviation (sd):
+x0    0.084
+x1    0.035
+x2    0.061
+x3    0.093
+Name: sd, dtype: float64
+Effective Sample Size (ESS):
+x0    2.0
+x1    2.0
+x2    4.0
+x3    2.0
+Name: ess_bulk, dtype: float64
+ESS Tail:
+x0    3.0
+x1    2.0
+x2    3.0
+x3    2.0
+Name: ess_tail, dtype: float64
+R-hat:
+x0    4.08
+x1    2.82
+x2    3.58
+x3    4.08
+Name: r_hat, dtype: float64

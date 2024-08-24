@@ -28,7 +28,16 @@ def process_data(datahf: np.ndarray, parameters: np.ndarray, t_eval: np.ndarray,
     - nearest_x: 1D numpy array of x values closest to each t_eval.
     - y_obs: 1D numpy array of corresponding y values from Yhf.
     """
-    indices = np.where(datahf[:, 1] == parameters[0])[0]
+    # Create a boolean array to store matching rows
+    match_condition = np.ones(datahf.shape[0], dtype=np.bool_)
+
+    # Loop through each parameter and apply the matching condition
+    for i in range(parameters.shape[0]):
+        match_condition &= (datahf[:, i + 1] == parameters[i])
+
+    # Get the indices where all parameter values match
+    indices = np.where(match_condition)[0]
+#indices = np.all(datahf[:, 1:] == parameters, axis=1) # np.where(datahf[:, 1] == parameters[0])[0]
     if len(indices) == 0:
         raise ValueError(f"No observations related to parameter: {parameters[0]}")
     
