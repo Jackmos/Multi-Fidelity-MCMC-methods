@@ -17,9 +17,9 @@ from sklearn.model_selection import KFold
 from tensorflow.keras.optimizers import Adam, Adamax, Nadam, RMSprop
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
-from Bayesian_inversion import *
+from BIP_functions import *
 from Helpers import *
-from Structure_new import *
+from Structure import *
 from module_utils import *
 
 
@@ -67,16 +67,15 @@ def check_observation_shape(y_obs: np.ndarray) -> Tuple[Optional[int], Optional[
     - dim_obs: int or None, the dimensionality of the observation data (1D or 2D)
     - range_geometry: object or None, the corresponding geometry object for the observation data.
     """
-    # if len(y_obs.shape) == 1 or y_obs.shape[1] == 1:
-    #     dim_obs = 1
-    #     range_geometry = Continuous1D(y_obs.shape[0])
-    # elif y_obs.shape[1] == 2:
-    dim_obs = y_obs.shape[1]
-    #     range_geometry = Continuous2D(y_obs.shape[0])
-    # else:
-    range_geometry = Continuous1D(np.prod(y_obs.shape))
-        # warnings.warn("Impossible for Cuqipy to manage a problem with 3 or more equations", UserWarning)
-        # return None, None
+    if len(y_obs.shape) == 1 or y_obs.shape[1] == 1:
+        dim_obs = 1
+        range_geometry = Continuous1D(y_obs.shape[0])
+    elif y_obs.shape[1] == 2:
+        dim_obs = 2
+        range_geometry = Continuous2D(y_obs.shape[0])
+    else:
+        warnings.warn("Impossible for Cuqipy to manage a problem with 3 or more equations", UserWarning)
+        return None, None
     return dim_obs, range_geometry
 
 
@@ -141,7 +140,7 @@ def relative_error(estimates: np.ndarray, x_real: np.ndarray) -> np.ndarray:
     Returns:
     - np.ndarray, the relative error between estimates and true values.
     """
-    return np.abs(estimates - x_real) / np.abs(x_real + 1e-10)
+    return np.abs(estimates - x_real) / np.abs(estimates + 1e-10)
 
 @njit
 def calculate_metrics(output_test: np.ndarray, pred: np.ndarray) -> Tuple[float, float]:
@@ -328,48 +327,6 @@ def add_noise(noise_std_data: np.ndarray,
     return output_flag, data_flag
 
 
-
-def plot_hist(
-    estimates: np.ndarray, 
-    real_x: np.ndarray, 
-    output1: np.ndarray, 
-    output2: np.ndarray,
-    par:float
-) -> None:
-    """
-    Plot histogram comparing estimated and real values.
-
-    Args:
-        estimates (np.ndarray): Estimated values from the model.
-        real_x (np.ndarray): True values to compare against.
-        output1 (np.ndarray): First set of output values for comparison.
-        output2 (np.ndarray): Second set of output values for comparison.
-
-    Returns:
-        None
-    """
-    diff_value = np.abs(real_x - estimates)
-    print(f"The difference between estimated values {diff_value}\n")
-
-    values = np.vstack((real_x, estimates))
-    categories = np.arange(1, values.shape[1] + 1)
-    bar_width = 0.35
-    bar_positions = [categories - bar_width / 2 + i * bar_width for i in range(values.shape[0])]
-
-    plt.figure()
-    for i in range(values.shape[0]):
-        plt.bar(bar_positions[i], values[i, :], width=bar_width)
-
-    plt.ylabel('Value')
-    plt.title('Comparison of Real and Estimated Values')
-    plt.ylim([0, np.max(par) * 1.1])
-    plt.xticks(categories)
-    plt.legend(["Real value", "Estimate"])
-    plt.show()
-
-
-
-
 def transfBestparam(best_params: Dict[str, Any], dic: Dict[str, Any]) -> None:
     """
     Transforms kernel and optimizer parameters from numeric indicators to string values.
@@ -549,4 +506,3 @@ def kCrossVal_parallel( Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[st
     scores = Parallel(n_jobs=n_jobs)(delayed(fit_and_score)(train_index, test_index) for train_index, test_index in kf.split(x))
     
     return np.mean(scores)
-

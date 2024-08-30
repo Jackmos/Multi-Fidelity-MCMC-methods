@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", category=UserWarning, message="Your data appea
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in scalar divide")
 
 
-def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo: str, rwmh_adaptive: bool) -> str:
+def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo: str, rwmh_adaptive: bool) -> str:#
     """
     Create a unique folder name for saving outputs based on key MCMC parameters.
 
@@ -58,7 +58,7 @@ def create_output_folder(n: int, rwmh_cov: np.ndarray, rmwh_scaling: float, algo
 
 
 
-def setup_proposal(algo: str, rwmh_cov: float, rmwh_scaling: float, rwmh_adaptive: bool, period: int, t0: int, dim: int, num_params:int):
+def setup_proposal(algo: str, rwmh_cov: float, rmwh_scaling: float, rwmh_adaptive: bool, period: int, t0: int, dim: int, num_params:int):#
     """
     Set up the proposal distribution based on the chosen algorithm.
 
@@ -88,7 +88,7 @@ def setup_proposal(algo: str, rwmh_cov: float, rmwh_scaling: float, rwmh_adaptiv
 
 
 
-def perform_diagnostics(idata: az.InferenceData, folder_name: str) -> az.data.inference_data.InferenceData:
+def perform_diagnostics(idata: az.InferenceData, folder_name: str) -> az.data.inference_data.InferenceData:#
     """
     Perform and save MCMC diagnostic plots and summary statistics.
 
@@ -157,7 +157,7 @@ def MCMC(
     dim: int = 0,
     num_params:int=1,
     force_sequential: bool = False
-) -> np.ndarray:
+) -> np.ndarray:#
     """
     Perform MCMC sampling using TinyDA and save diagnostics and results.
     
@@ -229,7 +229,7 @@ def MCMC(
         'r_hat': summary['r_hat']
     }
 
-def create_folder_name(base_name: str, max_length: int = 255) -> str:
+def create_folder_name(base_name: str, max_length: int = 255) -> str:#
     """
     Creates a safe and unique folder name based on the base name.
     
