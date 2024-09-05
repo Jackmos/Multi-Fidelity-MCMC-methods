@@ -13,8 +13,25 @@ It contains:
 - `helper_functions` - file containing some additional classes which collect functions usefull through the whole project
 - `MOD_helper` - file containing a class with some functions for Reduced Order Model applications
 - `network_utils` - file containing the classes related to neural networks, LSTM networks and Multi-fidelity Neural Networks
+  
 `source\` - file containing the classes with data and main function of the test cases. The five files are related with the correspondent five examples described in the report
+-`Diffusion_helper` - class for example I
+-`Bentchmark_class` - class for example II
+-`System_solver` - class for example III
+-`Burger_class` - class for example IV
+-`Reaction_diffusion_class` - class for example V
+
+
 `test\` - folder containing the most important examples, described in the report
+-`tutorial.py` - the simplest example (first part of example II in the report). Can be used to understand the general implementation of multi-fidelity neural networks and inverse processes
+-`benchmark_modified_case.py` - Generalization of example II in the report
+-`LV-1par_2step.py` - related to the first part of example III in the report. It contains the first Lotka-Volterra example with the procedures to run Delayed acceptance and adaptive metropolis
+-`LV-4par_3step.py` - related to the second part of example III in the report. It contains the second Lotka-Volterra example with the procedures to run MLDA
+-`LSTM_burger.py` - related to example IV in the report. LSTM implementation to build the relationship between LF data and HF data
+-`Diffusion\` - files to run the different examples presented in example I. ATTENTION: it requires to install in the `test\` folder a folder of data `DATA_reaction_diffusion_test_case`. Since this folder is very heavy, it is not installed on git, but may be available on request
+-`Reaction-diffusion\` - contains the files for example V, the folder contains the file to run the code, the data related to that. Since training the network requires much time, a saved version is shared 
+
+`Doc\`- folder containing the final report (will be updated with the presentation very soon!)
 
 requirements.txt - file containing the libraries and the correspondent versions used to generate the shared results
 
