@@ -1,7 +1,0 @@
-6 hours = 5 iterations
-taking about 4.8 h to do the evaluations, not 
-Instead of adding all points directly, let it choose new point only based on known points and just make it that it retakes an old value when revisiting old points? 
-also preset input 0 as first input
-somehow need to reduce evaluation time
-also do not fit everything every time: costs too much
-look at validation data!!!!

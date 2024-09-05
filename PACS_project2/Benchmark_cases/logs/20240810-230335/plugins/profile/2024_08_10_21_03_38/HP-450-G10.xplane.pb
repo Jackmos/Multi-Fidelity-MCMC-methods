@@ -1,4 +1,0 @@
-
-	/host:CPU
-eTask Environment*profile_start_time*profile_stop_time2Ù√È¨úºûı2»·’∫ùºûı"
-HP-450-G10
