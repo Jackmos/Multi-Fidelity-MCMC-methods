@@ -18,5 +18,7 @@ Folder 'utils\' is made of functions used by all the analyzed cases, both for th
 ## Usage
 
 ## Dependences
-
+- `optuna` [installation guide](https://optuna.readthedocs.io/en/stable/installation.html)
+- `cuqi` [git_page](https://github.com/CUQI-DTU/CUQIpy.git)
+- `tinyDA` [gitpage](https://github.com/mikkelbue/tinyDA.git)
 ## Environment
