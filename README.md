@@ -41,10 +41,30 @@ To get a local copy of this project, run the following commands:
 
 ```Bash
 git clone https://github.com/Jackmos/Multi-Fidelity-MCMC-methods.git
+```
+navigate to the Project Directory 
+```Bash
+cd Multi-Fidelity-MCMC-methods
+```
+create the virtual environment
+```Bash
+python -m venv venv
+```
+and activate the virtual environment, on Windows
+```Bash
+.\venv\Scripts\activate
+```
+or on Linux
+```Bash
+source venv/bin/activate
+```
 
-to run the 
+install the Required Libraries
+```Bash
+pip install -r requirements.txt
+```
 
-## Dependences
+## Links to some important libraries
 - `optuna` [installation guide](https://optuna.readthedocs.io/en/stable/installation.html)
 - `cuqi` [git_page](https://github.com/CUQI-DTU/CUQIpy.git)
 - `tinyDA` [gitpage](https://github.com/mikkelbue/tinyDA.git)
