@@ -39,6 +39,7 @@ requirements.txt - file containing all the libraries and the correspondent versi
 - **Python Version**: This project was developed and tested using Python `3.12.2`
 To get a local copy of this project, run the following commands:
 
+```Bash
 git clone https://github.com/Jackmos/Multi-Fidelity-MCMC-methods.git
 
 to run the 
