@@ -72,9 +72,7 @@ class FourierLayer(Layer):
 
 get_custom_objects().update({'FourierLayer': FourierLayer})
 
-class Activations:
-    @staticmethod
-    def custom_activation(x: tf.Tensor) -> tf.Tensor:
+def custom_activation(x: tf.Tensor) -> tf.Tensor:
         """
         Custom activation function combining linear and non-linear transformations.
 
@@ -86,19 +84,19 @@ class Activations:
         """
         return x + K.square(K.sin(x))
 
+get_custom_objects().update({'custom_activation': custom_activation})
 
-    @staticmethod
-    def sinusoidal_activation(x: tf.Tensor) -> tf.Tensor:
-        """
-        Sinusoidal activation function that applies a square sine transformation to the input.
 
-        Parameters:
-        - x (tf.Tensor): Input tensor.
+def sinusoidal_activation(x: tf.Tensor) -> tf.Tensor:
+    """
+    Sinusoidal activation function that applies a square sine transformation to the input.
 
-        Returns:
-        - tf.Tensor: Transformed tensor.
-        """
-        return K.square(K.sin(x))
+    Parameters:
+    - x (tf.Tensor): Input tensor.
+
+    Returns:
+    - tf.Tensor: Transformed tensor.
+    """
+    return K.square(K.sin(x))
     
-    get_custom_objects().update({'custom_activation': custom_activation})
-    get_custom_objects().update({'sinusoidal_activation': sinusoidal_activation})
+get_custom_objects().update({'sinusoidal_activation': sinusoidal_activation})

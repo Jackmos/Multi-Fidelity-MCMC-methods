@@ -1,4 +1,4 @@
-# # Three Steps MultiFidelity Neural Network
+# # EXAMPLE I Three Steps MultiFidelity Neural Network
 
 # Code to show the performance of the Neural Network when dealing with different LF datasets 
 
@@ -6,22 +6,15 @@
 import keras.backend as K
 import numpy as np
 from matplotlib import pyplot as plt
-# import os
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import pandas as pd
 import os
 import keras
 import tensorflow as tf
-import logging
 
-logging.getLogger('tensorflow').setLevel(logging.ERROR)
 from utils.network_utils import *
 from utils.functions_to_ray import *
-from pathlib import Path
-
 from source.Diffusion_helper import *
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
 
 
 # reproducibility
@@ -83,8 +76,7 @@ def main_function():
     batch_size=[200,150, 100]
 
 
-    U_LF_list = []
-    U_HF_list = []
+
     # number of epochs 
     Nepo=[7000,1500,8000]
 
@@ -96,101 +88,8 @@ def main_function():
     r2_Lin_df = pd.DataFrame(columns=['Discretization','Diffusion','R2'])
     mse_HF_df = pd.DataFrame(columns=['Discretization','Diffusion','MSE'])  # dataframe which stores HF MSE
     mse_LF_df = pd.DataFrame(columns=['Discretization','Diffusion','MSE'])  # dataframe which stores LF MSE
-    mse_Lin_df = pd.DataFrame(columns=['Discretization','Diffusion','MSE'])
-
-    # ## Neural Network
-
-    ## THE FOLLOWING BLOCK REPRESENTS how to perform the HPO analysis of hyperparameters in one of the best case scenarios 
 
 
-    # Initialize variables
-    # m = 0
-    # d = 2
-
-    # test_mse_HF_list = []
-    # test_mse_LF_list = []
-    # test_mse_per_list = []
-
-    # r2_HF_list = []
-    # r2_LF_list = []
-    # r2_per_list = []
-
-    # # Loop through parameters
-    # for nhf in n_HF:
-    #     for nlf in Nlf:
-    #         for nper in n_per:
-
-    #             # Print current configuration
-    #             print(f"******** # Nb. nodes = {Discretizations[m]} ********")
-    #             print(f"******** # Diff: = {diffusion[d]} ********")
-    #             print(f"******** # NHF: = {nhf} ********")
-    #             print(f"******** # Nper: = {nper} ********")
-    #             print(f"******** # NLF: = {nlf} ********")
-                
-    #             # Import Low Fidelity data
-    #             file_path_LF = f"../DATA_reaction_diffusion_test_case/reaction_diffusion_LF_{Discretizations[m]}_d{diffusion[d]}.mat"
-    #             reaction_LF_test, U_LF_test = Diffusion_model_helpers.import_data(file_path_LF)
-
-    #             # Normalize and select specific data points
-    #             U_LF_test = U_LF_test[:, -1, int(4*(Discretizations[m]-1)/9), int(4*(Discretizations[m]-1)/9)]
-    #             U_LF_test = Diffusion_model_helpers.normalization(U_LF_test)
-    #             reaction_LF_test = Diffusion_model_helpers.normalization(reaction_LF_test)
-                
-    #             # Transform Low Fidelity dataset
-    #             reaction_LF_test_original = np.c_[reaction_LF_test, np.abs(np.sin(5 * np.pi * reaction_LF_test[:, 0] - 5 * np.pi / 6))]
-    #             U_LF_test_original = U_LF_test  # Keep original for later use
-                
-    #             # Data augmentation with noise
-    #             noise_std1 = [0.02, 0.01, 0.02, 0.01]
-    #             noise_std2 = [0.01, 0.005, 0.01, 0.005]
-    #             U_LF_test, reaction_LF_test = Diffusion_model_helpers.add_noise(noise_std1, noise_std2, reaction_LF_test, U_LF_test.reshape(-1,1))
-                
-    #             # Prepare datasets for training and validation
-    #             reaction_LF, U_train_LF = Diffusion_model_helpers.select_random_data(reaction_LF_test, U_LF_test, nlf)
-    #             reaction_per, U_train_per = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nper)
-    #             reaction_HF, U_HF = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nhf)
-
-    #             # Transform datasets for training
-    #             reaction_LF = Diffusion_model_helpers.augment_with_sin(reaction_LF)
-    #             reaction_LF_test = Diffusion_model_helpers.augment_with_sin(reaction_LF_test)
-
-    #             # Prepare validation datasets
-    #             reaction_HF_val, U_HF_val = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nhf)
-    #             reaction_per_val, U_per_val = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nper)
-    #             reaction_LF_val, U_train_LF_val = Diffusion_model_helpers.select_random_data(reaction_LF_test, U_LF_test, nlf)
-
-    #             # Transform validation dataset
-    #             reaction_LF_val = Diffusion_model_helpers.augment_with_sin(reaction_LF_val)
-                
-    #             ########################## Neural Network ##########################
-    #             K.clear_session()
-
-    #             # Define and train the Multifidelity network
-    #             model_definition = {
-    #                 "network_type": "3step",
-    #                 "names": ["LF", "Hfper", "HF"],
-    #                 "data_train": [reaction_LF, reaction_per, reaction_HF],
-    #                 "output_train": [U_train_LF, U_train_per, U_HF],
-    #                 "data_val": [reaction_LF_val, reaction_per_val, reaction_HF_val],
-    #                 "output_val": [U_train_LF_val, U_per_val, U_HF_val],
-    #                 "N": Nepo,
-    #                 "n": batch_size,
-    #                 "train": True,
-    #                 "do_HPO": True,
-    #                 "verbose": False
-    #             }
-    #             model = NetworkFactory.build_network(NetworkConfig(**model_definition),)
-
-    #             # # Evaluate and plot results for each network stage
-    #             # evaluate_and_plot_network_1(model, reaction_LF_test_original, U_LF_test_original, reaction_LF, U_train_LF, test_mse_LF_list, r2_LF_list)
-    #             # evaluate_and_plot_network_2(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_per_train, test_mse_per_list, r2_per_list)
-    #             # evaluate_and_plot_network_3(model, reaction_HF_test_original, U_HF_test_original, reaction_HF, U_HF, input_HF_train, test_mse_HF_list, r2_HF_list)
-    #             # Evaluate and plot results for each network stage
-
-
-    # # Print final results
-    # print(r2_HF_df.round(5))
-    # print(mse_HF_df.round(5))
 
 
 

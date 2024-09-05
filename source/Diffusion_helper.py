@@ -15,7 +15,7 @@ import os
 
 from typing import Tuple, List, Optional,Any
 from utils.helper_functions import Helpers_NN
-from utils.functions_to_ray import FourierLayer, Activations
+from utils.functions_to_ray import *
 
 class Diffusion_model_helpers:
 
@@ -323,14 +323,14 @@ class Diffusion_model_helpers:
             # Model architecture for the "LF" model
             hidden1 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(0.001)
             )(inputs)
             
             hidden2 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(0.001)
             )(hidden1)
@@ -339,7 +339,7 @@ class Diffusion_model_helpers:
             
             hidden3 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(0.001)
             )(fourier_layer1)
@@ -347,7 +347,7 @@ class Diffusion_model_helpers:
             
             hidden4 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(0.001)
             )(hidden3)
@@ -358,7 +358,7 @@ class Diffusion_model_helpers:
             # Model architecture for the "HF" model
             hidden1 = Dense(
                 units=int(params["nodes"]),
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2(params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(inputs)
@@ -368,7 +368,7 @@ class Diffusion_model_helpers:
             
             hidden2 = Dense(
                 units=int(params["nodes"]),
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2(params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(fourier_layer)
@@ -379,21 +379,21 @@ class Diffusion_model_helpers:
             # Model architecture for the "Single" model
             hidden1 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(params["l2weight"])
             )(inputs)
             
             hidden2 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(params["l2weight"])
             )(hidden1)
             
             hidden3 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"],
                 kernel_regularizer=l2(params["l2weight"])
             )(hidden2)
@@ -411,7 +411,7 @@ class Diffusion_model_helpers:
             # Model architecture for the "Hflin" model
             hiddenlin = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2(params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(inputs)
@@ -422,14 +422,14 @@ class Diffusion_model_helpers:
             # Model architecture for the "Hfper" model
             hiddenper = Dense(
                 units=64,
-                activation=Activations.sinusoidal_activation,
+                activation=sinusoidal_activation,
                 kernel_regularizer=l2(params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(inputs)
             
             hiddenper2 = Dense(
                 units=64,
-                activation=Activations.sinusoidal_activation,
+                activation=sinusoidal_activation,
                 kernel_regularizer=l2(params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(hiddenper)
@@ -441,7 +441,7 @@ class Diffusion_model_helpers:
             # Model architecture for the "Inter" model
             hidden1 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"]
             )(inputs)
             
@@ -449,15 +449,15 @@ class Diffusion_model_helpers:
             
             hidden2 = Dense(
                 units=64,
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_initializer=params["kernel_init"]
             )(fourier_layer1)
             
-            outputLF = Dense(1, activation=Activations.custom_activation, name="LF")(hidden2)
+            outputLF = Dense(1, activation=custom_activation, name="LF")(hidden2)
             
             outputadd = Dense(
                 units=int(params["nodes"]),
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(hidden2)
@@ -466,7 +466,7 @@ class Diffusion_model_helpers:
             
             hidden3 = Dense(
                 units=int(params["nodes"]),
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(merge)
@@ -475,7 +475,7 @@ class Diffusion_model_helpers:
 
             hidden4 = Dense(
                 units=int(params["nodes"]),
-                activation=Activations.custom_activation,
+                activation=custom_activation,
                 kernel_regularizer=l2((1 - params["alpha"]) * params["l2weight"]),
                 kernel_initializer=params["kernel_init"]
             )(fourier_layer2)

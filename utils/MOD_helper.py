@@ -5,6 +5,7 @@ from sklearn.utils import extmath
 from typing import Any, Optional, List, Tuple
 import scipy.io as sio
 from utils.helper_functions import Clean
+import os
 
 class ROM:
     
@@ -13,7 +14,7 @@ class ROM:
         Initialize the Reduced Order Model (ROM) class.
 
         Parameters:
-        - burger_eq (Any): An instance of the Burger equation solver or model.
+        -  model (Any): An instance of a PDE model.
         - n_POD (int): The number of Proper Orthogonal Decomposition (POD) modes to retain.
         """
         self.model = model
@@ -247,33 +248,71 @@ class ROM:
         return self.u_POD_lf_train, self.u_POD_hf_train
 
 
-    def plot_singular_values_threshold(self, n_POD)->None:
+    def plot_singular_values_threshold(
+        self, 
+        n_POD: int, 
+        output_folder: str = "plots_reaction_diffusion", 
+        file_name: str = "singular_values_threshold.png"
+    ) -> None:
+        """
+        Plot the singular values and cumulative energy with respect to the selected number of POD modes,
+        and save the plot to a file instead of displaying it.
 
-        plt.figure(figsize = (10,4))
+        Parameters:
+        - n_POD (int): Number of POD modes selected for the threshold.
+        - output_folder (str): Folder where the plot will be saved. Defaults to 'Reaction_diffusion_POD_plot'.
+        - file_name (str): Name of the file for the saved plot image. Defaults to 'singular_values_threshold.png'.
+        """
+        
+        # Ensure the directory for saving the plot exists
+        full_output_dir = Clean.create_output_directory('output', output_folder)
+        save_path = os.path.join(full_output_dir, file_name)
+
+        # Create the plot figure
+        plt.figure(figsize=(10, 4))
+
+        # First subplot: Singular values on a logarithmic scale
         plt.subplot(121)
-        plt.plot(self.S,'*-')
-        plt.axvline(x = n_POD-1)
-        plt.yscale('log')
-        plt.xlabel('# bases')
+        plt.plot(self.S, '*-', label='Singular Values')  # Plot singular values
+        plt.axvline(x=n_POD - 1, color='r', linestyle='--', label=f'n_POD = {n_POD}')  # Vertical line at n_POD
+        plt.yscale('log')  # Use logarithmic scale for singular values
+        plt.xlabel('# bases')  # Label for the x-axis
 
         plt.subplot(122)
-        plt.plot(np.cumsum(self.S)/np.sum(self.S),'*-')
-        plt.axvline(x = n_POD-1)
-        plt.xlabel('# bases')
-        plt.show()
+        plt.plot(np.cumsum(self.S) / np.sum(self.S), '*-', label='Cumulative Energy')  # Plot cumulative energy
+        plt.axvline(x=n_POD - 1, color='r', linestyle='--', label=f'n_POD = {n_POD}')  # Vertical line at n_POD
+        plt.xlabel('# bases')  # Label for the x-axis
 
-    def plot_POD_coefficients(self, ind_re: int) -> None:
+        # Save the plot to the specified file
+        plt.savefig(save_path)
+        plt.close()  
+        print(f"Singular values threshold plot saved at: {save_path}")
+
+    def plot_POD_coefficients(
+        self, 
+        ind_re: int, 
+        output_folder: str = 'Burger_output', 
+        file_name: str = "POD_coefficients_plot.png"
+    ) -> None:
         """
-        Plot POD coefficients: Low-Fidelity (LF) vs High-Fidelity (HF).
-        
+        Plot POD coefficients: Low-Fidelity (LF) vs High-Fidelity (HF) and save the plot.
+
         Parameters:
         - ind_re (int): Index of the Reynolds number case to plot.
+        - output_folder (str): Folder where the POD coefficient plots will be saved. Defaults to 'Reaction_diffusion_POD_plot'.
+        - file_name (str): Name of the file for the saved plot image. Defaults to 'POD_coefficients_plot.png'.
         """
+        # Create the directory for saving the plot
+        full_output_dir = Clean.create_output_directory('output', output_folder)
+        save_path = os.path.join(full_output_dir, file_name)
+
+        # Set up the figure
         fig = plt.figure(figsize=(12, 6))
         plt.subplots_adjust(hspace=0.5)
         fig.suptitle('POD coefficients: LF vs HF', fontsize=14)
         t = self.model.t
 
+        # Plot for each mode
         for mode in range(min(6, self.n_POD)):
             ax = fig.add_subplot(231 + mode)
             ax.plot(t, self.u_POD_lf_train[ind_re, :, mode], label='LF', linewidth=2, color='green', linestyle='--')
@@ -281,16 +320,28 @@ class ROM:
             ax.set_title(f'POD coord. {mode + 1}')
             ax.set_xlabel('t')
             ax.legend()
-        plt.show()
 
-    def plot_POD_output(self, ind_re: int, output_pred: np.ndarray) -> None:
+        # Save the plot to a file instead of showing it
+        plt.savefig(save_path)
+        plt.close() 
+        print(f"POD coefficients plot saved at: {save_path}")
+
+    def plot_POD_output(
+        self, 
+        ind_re: int, 
+        output_pred: np.ndarray, 
+        output_folder: str = 'Burger_output', 
+        file_name: str = "POD_output_plot.png"
+    ) -> None:
         """
-        Plot POD output coefficients: predicted vs test data.
-        
+        Plot POD output coefficients: predicted vs test data and save the plot to a file.
+
         Parameters:
         - ind_re (int): Index of the Reynolds number case to plot.
         - output_pred (np.ndarray): Predicted output from the model.
-        
+        - output_folder (str): Folder where the plots will be saved. Defaults to 'Reaction_diffusion_POD_plot'.
+        - file_name (str): Name of the file for the saved plot image. Defaults to 'POD_output_plot.png'.
+
         Raises:
         - ValueError: If output_pred is not properly defined or does not match the shape of output_test.
         - ValueError: If output_test is not defined.
@@ -301,11 +352,17 @@ class ROM:
         if self.model.output_test is None:
             raise ValueError("Error: output_test not defined, run 'perform_POD' before.")
 
+        # Create the directory for saving the plot
+        full_output_dir = Clean.create_output_directory('output', output_folder)
+        save_path = os.path.join(full_output_dir, file_name)
+
+        # Set up the figure
         fig = plt.figure(figsize=(12, 6))
         plt.subplots_adjust(hspace=0.5)
         fig.suptitle('POD coefficients: Predicted vs Test', fontsize=14)
         t = self.model.t
 
+        # Plot the predicted vs test data for each mode
         for mode in range(min(6, self.n_POD)):
             ax = fig.add_subplot(231 + mode)
             ax.plot(t, self.u_POD_hf_test[ind_re, :, mode].reshape(-1), 'b-', label='Test', linewidth=2)
@@ -313,6 +370,10 @@ class ROM:
             ax.set_title(f'POD coord. {mode + 1}')
             ax.set_xlabel('t')
             ax.legend()
-        plt.show()
+
+        # Save the plot to a file
+        plt.savefig(save_path)
+        plt.close()  
+        print(f"POD output plot saved at: {save_path}")
 
 

@@ -49,9 +49,6 @@ def set_seed():
 def main_function():
 # ## Presentation of the model 
 
-    # Create a folder for the tutorial if it doesn't exist
-    output_folder = 'tutorial_output'
-    os.makedirs(output_folder, exist_ok=True)
 
     set_seed()
     # Here, the model can be chosen between "Basic_regression", "Discontinuous_regression" and "Oscillatory_regression". 
@@ -225,10 +222,9 @@ def main_function():
     algo = "MH_tiny"                        # Metropolis-Hastings of tinyDA library
 
 
-    # Add the 'utils' directory containing Structure.py to the PYTHONPATH
-    module_directory = os.path.abspath(os.path.join('..', 'utils'))
-    os.environ['PYTHONPATH'] = module_directory
-    sys.path.append(module_directory)
+    # module_directory = os.path.abspath(os.path.join('..', 'utils'))
+    # os.environ['PYTHONPATH'] = module_directory
+    # sys.path.append(module_directory)
 
     # definition of the object for Bayesian Inversion Problem
     BIP=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=final_model)

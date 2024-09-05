@@ -422,7 +422,7 @@ class BurgerEquation:
             
 
 
-    def plot_comparison(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray, folder_name: str = 'comparison_plots', file_name: str = 'comparison_{index}.png') -> None:
+    def plot_comparison(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray, folder_name: str = 'Burger_output', file_name: str = 'comparison_{index}.png') -> None:
         """
         Save plots comparing low-fidelity, high-fidelity, and predicted data.
 
@@ -474,10 +474,9 @@ class BurgerEquation:
             plt.savefig(save_path)
             plt.close(fig)
 
-            print(f"Plot saved to {save_path}")
 
 
-    def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray, folder_name: str = 'error_plots', file_name: str = 'error_{index}.png') -> None:
+    def plot_error(self, output_pred: np.ndarray, basis: np.ndarray, ind_test: np.ndarray, folder_name: str = 'Burger_output', file_name: str = 'error_{index}.png') -> None:
         """
         Plot and save the relative and absolute errors for low-fidelity (LF) and multi-fidelity POD (MF-POD) predictions.
 
@@ -527,25 +526,43 @@ class BurgerEquation:
             plot_filename = file_name.format(index=i + 1)
             save_path = os.path.join(save_dir, plot_filename)
             plt.savefig(save_path)
-            plt.close(fig)  # Close the figure after saving
+            plt.close(fig)  
 
-            print(f"Plot saved to {save_path}")
         
-    def plot_(self, re: float) -> None:
+    def plot_(
+        self, 
+        re: float, 
+        output_folder: str = 'Burger_output', 
+        file_name: str = "low_high_fidelity_plot.png"
+    ) -> None:
         """
-        Plot both low-fidelity and high-fidelity outputs for a given Reynolds number.
+        Plot both low-fidelity and high-fidelity outputs for a given Reynolds number, 
+        and save the plot as an image file.
 
         Parameters:
         - re (float): Normalized Reynolds number.
+        - output_folder (str): Folder where the plots will be saved. Defaults to 'Reaction_diffusion_POD_plot'.
+        - file_name (str): Name of the file for the saved plot image. Defaults to 'low_high_fidelity_plot.png'.
         """
+        
+        # Denormalize the Reynolds number for plotting
         re_value = self.denormalize(re)
+
+        # Generate grids for time and space
         t_grid, x_grid = np.meshgrid(self.t, self.x)
 
+        # Compute high-fidelity and low-fidelity solutions over the grid
         u_hf = np.array([[self.u_HF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
         u_lf = np.array([[self.u_LF(self.x[i], self.t[n], re_value) for i in range(self.nh)] for n in range(self.nt)])
 
+        # Create the directory for saving the plot
+        full_output_dir = self.create_output_directory('output', output_folder)
+        save_path = os.path.join(full_output_dir, file_name)
+
+        # Create the plot
         fig = plt.figure(figsize=(6, 5))
 
+        # Plot low-fidelity solution
         ax = fig.add_subplot(211)
         surf = ax.contourf(t_grid, x_grid, u_lf.T, cmap='plasma', levels=10)
         plt.xlabel('t', fontsize=12)
@@ -554,6 +571,7 @@ class BurgerEquation:
         cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
         plt.title(f'Low-fidelity $Re = ${re_value:.2f}', fontsize=14)
 
+        # Plot high-fidelity solution
         ax = fig.add_subplot(212)
         surf = ax.contourf(t_grid, x_grid, u_hf.T, cmap='plasma', levels=10)
         plt.xlabel('t', fontsize=12)
@@ -562,8 +580,10 @@ class BurgerEquation:
         cbar.ax.set_ylabel('u', fontsize=12, labelpad=15, rotation=0)
         plt.title(f'High-fidelity $Re = ${re_value:.2f}', fontsize=14)
 
+        # Adjust layout and save the plot
         plt.tight_layout()
-        plt.show()     
+        plt.savefig(save_path)  
+        plt.close()  
         
     @staticmethod
     def getModel(params: ParamsType, num_inputs: int, name: str, num_outputs: int) -> OutputType:

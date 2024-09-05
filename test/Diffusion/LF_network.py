@@ -5,8 +5,6 @@
 import keras.backend as K
 import numpy as np
 
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import keras
 import tensorflow as tf
 from source.Diffusion_helper import *
@@ -15,7 +13,6 @@ from utils.functions_to_ray import *
 
 from utils.network_utils import *
 
-from pathlib import Path
 
 
 # reproducibility

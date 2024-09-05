@@ -523,9 +523,9 @@ class INetwork(ABC):
         self.model = load_model(
             file_path, 
             custom_objects={
-                'sinusoidal_activation': Activations.sinusoidal_activation,
+                'sinusoidal_activation': sinusoidal_activation,
                 'FourierLayer': FourierLayer, 
-                'custom_activation': Activations.custom_activation
+                'custom_activation': custom_activation
             }
         )
         self.input_shape = self.model.inputs[0][-1]
@@ -866,8 +866,8 @@ class Neural_Network(INetwork):
         """
         if self.hist is not None and 'loss' in self.hist.history:
             # Create the folder if it doesn't exist
-            save_dir = os.path.join(os.path.dirname(__file__), 'simulation_result')
-            os.makedirs(save_dir, exist_ok=True)
+            save_dir = Clean.create_output_directory('output', 'simulation_result')
+
 
             # Define the file name
             base_filename = f"loss_{self.name}_NN"
@@ -974,7 +974,6 @@ class Neural_Network(INetwork):
         # Set random seed for reproducibility
         tf.keras.utils.set_random_seed(29)
         tf.config.experimental.enable_op_determinism()
-
         def objective(trial):
             K.clear_session()
             tf.compat.v1.reset_default_graph()  # Ensure a clean graph for each trial
@@ -992,7 +991,7 @@ class Neural_Network(INetwork):
             with tf.device(self.device if self.device else '/GPU:0'):  # Default to GPU if not specified and an appropriate GPU is present                
                 loss = CrossValidations.kCrossVal_parallel(self._N, data_val, output_val,                        # Perform k-fold cross-validation to evaluate the model
                                           params, self.name, self._get_shape(data_val), 
-                                          self._get_shape(output_val),self.getModel
+                                          self._get_shape(output_val),getModel=self.getModel
                                           )    
             # Implement early stopping within the HPO loop
             trial.report(loss, step=trial.number)
@@ -1248,7 +1247,7 @@ class MultiFidelity(INetwork):
         """
         self.model_list = []
         for file_path in file_paths:
-            model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation': Activations.custom_activation})
+            model = load_model(file_path, custom_objects={'FourierLayer': FourierLayer, 'custom_activation': custom_activation})
             self.model_list.append(model)
 
         self.input_shape = self.model_list[0].input_shape[-1]
@@ -1270,19 +1269,25 @@ class MultiFidelity(INetwork):
         tf.config.experimental.enable_op_determinism()
 
         for index, name in enumerate(self.names):
-            model = NetworkFactory.build_network(
+            
+            config=NetworkConfig(
                 network_type=name,
                 names=self.names,
                 network_parameters=self.params[index],
                 dataset_train=data_train_support,
                 output_train=self.output_train[index],
+                dataset_validation=None,
+                output_validation=None,
                 epochs_number=self.N[index],
                 batch_size=self.n[index],
                 train=True,
                 do_HPO=False,
                 verbose=self.verbose,
                 device=device or self.device,
+                num_trials=self.num_trials
             )
+
+            model=NetworkFactory.build_network(config,self.getModel)
             self.model_list.append(model)
 
             if (index + 1) < len(self.data_train):
@@ -1323,11 +1328,10 @@ class MultiFidelity(INetwork):
                 do_HPO=True,
                 verbose=self.verbose,
                 device=device or self.device,
-                getModel=self.getModel
 
             )
 
-            model = NetworkFactory.build_network(config)
+            model = NetworkFactory.build_network(config,self.getModel)
 
             self.model_list.append(model)
 
@@ -1447,8 +1451,9 @@ class LSTM_network(INetwork):
         """
         if self.hist is not None and 'loss' in self.hist.history:
             # Create the folder if it doesn't exist
-            save_dir = os.path.join(os.path.dirname(__file__), 'simulation_result')
-            os.makedirs(save_dir, exist_ok=True)
+
+            save_dir = Clean.create_output_directory('output', 'simulation_result')
+
 
             # Define the file name
             base_filename = f"loss_{self.name}"

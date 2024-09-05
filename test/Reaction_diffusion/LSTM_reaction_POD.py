@@ -1,17 +1,13 @@
+# Example 5: Reaction -diffusion model 
 from utils.functions_to_ray import  *
 ######### LIBRARIES ############
 import numpy as np
-
 
 import os
 import keras
 import tensorflow as tf
 import sys
 import numpy as np
-
-import sys
-import os
-import tensorflow as tf
 
 from utils. MOD_helper import *
 from utils.network_utils import NetworkConfig,NetworkFactory
@@ -25,7 +21,7 @@ def main_function():
 
 
     seed = 7
-
+    # creation of the data
     data_diffusion = {
         "tlf_0":0.,
         "thf_0":0.,
@@ -41,7 +37,7 @@ def main_function():
     data.interpolate_data()
 
 
-
+    # MOD
     n_POD=9
     reaction_rom=ROM(data,64)
     reaction_rom.compute_POD_basis(64)
@@ -85,7 +81,7 @@ def main_function():
 
     model = NetworkFactory.build_network(NetworkConfig(network_type="LSTM"),data.getModel)
 
-
+    # the model has been saved to use, since the training requires much time!
     train=False
 
     if train is True:
@@ -126,7 +122,7 @@ def main_function():
     np.random.seed(seed)
     keras.utils.set_random_seed(seed)
 
-
+    # BAYESIAN INVERSE PROBLEM 
     data.set_n_POD(9)
 
     mean_prior = np.array([1.])
@@ -146,13 +142,14 @@ def main_function():
     n_chains = 2
     algo = "MH_tiny"
 
-    module_directory = os.path.abspath(os.path.join('..', 'utils'))
+    # module_directory = os.path.abspath(os.path.join('..', 'utils'))
 
-    # Add the 'utils' directory containing Structure.py to the PYTHONPATH
-    os.environ['PYTHONPATH'] = module_directory
-    sys.path.append(module_directory)
+    # # Add the 'utils' directory containing Structure.py to the PYTHONPATH
+    # os.environ['PYTHONPATH'] = module_directory
+    # sys.path.append(module_directory)
     BIP=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=model)
 
+    # ATTENTION IT REQUIRES MUCH TIME!
     BIP.run(inputs_HF=input_train, 
         domain_bounds=(0.,2.),
         mean_prior=mean_prior, 
@@ -170,40 +167,12 @@ def main_function():
         sigma_noise=sigma_noise,
         number_data=n_data_bounds,
         sigma=sigma_bounds,
-        fwd_LSTM_folder="test/Reaction_diffusion/fwd_models/model_",
+        fwd_LSTM_folder="test/Reaction_diffusion/fwd_models/model_",# path to the folder contaning the networks to generate POD coefficient. 
+                                                                    # It requires to much time to train them from scratch
         forward_low_fidelity= data._forward_low_fidelity,
     )
 
 
-    seed = 10
-    tf.random.set_seed(seed)
-    np.random.seed(seed)
-    keras.utils.set_random_seed(seed)
-
-
-    parameter = np.array([np.unique(input_train[:,1])[-2]])
-
-    
-    BIP.run(inputs_HF=input_train, 
-        domain_bounds=(0.,2.),
-        mean_prior=mean_prior, 
-        cov_prior=cov_prior, 
-        output_HF=uhf_train_lstm.reshape(-1, 9), 
-        real_parameters=parameter, 
-        rwmh_adaptive=rwmh_adaptive, 
-        iterations=iterations, 
-        burn_in=burnin, 
-        n_chains= n_chains, 
-        levels=1,  
-        force_sequential=True,
-        rwmh_scaling=rwmh_scaling_bounds,
-        rwmh_covariance=rwmh_cov,
-        sigma_noise=sigma_noise,
-        number_data=n_data_bounds,
-        sigma=sigma_bounds,
-        fwd_LSTM_folder="test/Reaction_diffusion/fwd_models/model_",
-        forward_low_fidelity= data._forward_low_fidelity,
-    )
 
 
 if __name__ == "__main__":

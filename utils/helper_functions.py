@@ -544,23 +544,30 @@ class Inversion_helper:
     def plot_hist(
         estimates: np.ndarray, 
         real_x: np.ndarray, 
-        par:float
+        par: float, 
+        file_name: str="BIP_final_result"
     ) -> None:
         """
-        Plot histogram comparing estimated and real values.
+        Plot histogram comparing estimated and real values, then save the plot to a file.
 
         Args:
             estimates (np.ndarray): Estimated values from the model.
             real_x (np.ndarray): True values to compare against.
-            output1 (np.ndarray): First set of output values for comparison.
-            output2 (np.ndarray): Second set of output values for comparison.
+            par (float): A parameter for scaling the y-axis.
+            file_name (str): The name of the file for the saved histogram image.
 
         Returns:
             None
         """
+        # Calculate the difference between estimates and real values
         diff_value = np.abs(real_x - estimates)
-        print(f"The difference between estimated values {diff_value}\n")
+        print(f"The difference between estimated values: {diff_value}\n")
 
+        # Create the directory for saving output images
+        full_output_dir = Clean.create_output_directory("output", "BIP_histograms")
+        os.makedirs(full_output_dir, exist_ok=True)  # Create BIP_histograms folder if it doesn't exist
+
+        # Create the histogram plot
         values = np.vstack((real_x, estimates))
         categories = np.arange(1, values.shape[1] + 1)
         bar_width = 0.35
@@ -575,7 +582,12 @@ class Inversion_helper:
         plt.ylim([0, np.max(par) * 1.1])
         plt.xticks(categories)
         plt.legend(["Real value", "Estimate"])
-        plt.show()
+
+        # Save the plot to a file in the BIP_histograms directory
+        save_path = os.path.join(full_output_dir, file_name)
+        plt.savefig(save_path)
+        plt.close()  # Close the plot to free memory
+        print(f"Histogram saved at: {save_path}")
 
     @staticmethod
     def simulate_observations(x_real: np.ndarray, cov_noise: float, model_wrapper: Any) -> np.ndarray:

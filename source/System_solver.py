@@ -332,7 +332,7 @@ class SystemSolver(ABC):
 
         elif name == 'Hfper':
             # High-Fidelity model with a custom activation function
-            hiddenlin = Dense(64, activation=Activations.custom_activation, kernel_regularizer=l2(params['l2weight']), 
+            hiddenlin = Dense(64, activation=custom_activation, kernel_regularizer=l2(params['l2weight']), 
                             kernel_initializer=params['kernel_init'])(inputs)
             output = Dense(num_outputs, activation='linear', name='HFper')(hiddenlin)
 

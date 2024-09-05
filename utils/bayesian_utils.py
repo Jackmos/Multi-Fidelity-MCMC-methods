@@ -1,4 +1,5 @@
 from utils.functions_to_ray import *
+from utils.helper_functions import Clean
 import arviz as az
 import logging
 import numpy as np
@@ -10,6 +11,7 @@ import uuid
 import warnings
 from bayes_opt import BayesianOptimization
 import warnings
+
 
 from cuqi.distribution import JointDistribution
 from cuqi.sampler import MH, NUTS, pCN
@@ -1452,6 +1454,7 @@ class MCMC:
         )
 
         folder_path = create_folder_name(folder_name)
+        folder_path=Clean.create_output_directory("output", folder_path)
         return folder_path
 
     def _perform_diagnostics(self, idata: az.InferenceData, 
@@ -1514,6 +1517,7 @@ class MCMC:
         :param summary: The summary statistics to save.
         :param folder_name: The path to the folder where the summary will be saved.
         """
+
         with open(os.path.join(folder_name, "summary_statistics.txt"), "w") as f:
             f.write("MCMC Summary Statistics:\n")
             f.write(f"Estimated Parameters (mean):\n{summary['mean']}\n")
@@ -1617,9 +1621,8 @@ class MCMC_cuqi:
         x_init: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         # Setup the proposal distribution using the algorithm instance
-        #my_proposal = self.algorithm_instance.setup_proposal(posterior=posterior, x_init=x_init, scale=self.scale,adapt=self.adapt)
         if not hasattr(self, 'proposal'):
-            self.proposal = self.algorithm_instance.setup_proposal(posterior=posterior, x_init=x_init, scale=self.scale, adapt=self.adapt)    # vedi se funzia
+            self.proposal = self.algorithm_instance.setup_proposal(posterior=posterior, x_init=x_init, scale=self.scale, adapt=self.adapt)    
 
         # Sample from the posterior distribution
         samples =  self.proposal.sample_adapt(N - burn_in, burn_in) if self.adapt else  self.proposal.sample(N - burn_in, burn_in)
@@ -1722,6 +1725,7 @@ class MCMC_cuqi:
         Returns:
             None
         """
+
         with open(os.path.join(self.folder_name, "diagnostic_stats.txt"), "w") as f:
             f.write("MCMC Diagnostics:\n")
             f.write(f"Estimated Parameters (mean): {np.mean(estimates, axis=1)}\n")
@@ -1770,12 +1774,3 @@ class MCMC_cuqi:
 
 
 
-
-# @ray.remote
-# def chain_creation_parallel(
-#     N: int, 
-#     burn_in: int,  
-#     posterior: Any, 
-#     x_init: np.ndarray
-# ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-#     return MCMC_cuqi.chain_creation(N, burn_in,  posterior, x_init)

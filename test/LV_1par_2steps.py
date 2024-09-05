@@ -151,6 +151,11 @@ def main_function():
         proposal_sd = 0.6484    
         scaling = 1.
         adapt=True
+
+
+        # # Add the 'utils' directory containing Structure.py to the PYTHONPATH
+        # os.environ['PYTHONPATH'] = module_directory
+        # sys.path.append(module_directory)
         BB=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=final_model_trained)
 
 

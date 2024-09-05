@@ -4,7 +4,7 @@ from scipy.interpolate import griddata
 from typing import Tuple, List
 #from multifidelity_NN_functions import compute_randomized_SVD
 import scipy.io
-
+from utils.functions_to_ray import *
 from scipy.spatial import cKDTree
 import tensorflow as tf
 from tensorflow.keras.models import Model
@@ -71,19 +71,6 @@ class ReactionDiffusionData:
         self.basis=None
         self.fwd_uLF=[]
 
-
-
-    def get_input_dimensions(self)-> Tuple[int,int,int, int]:
-        
-        return self.N_mu_train, self.N_mu_test, self.Nt_train,self.Nt_test
-
-
-    def get_space_discretization(self)-> Tuple[int,int]:
-
-
-        self.Nx_lf, self.Ny_lf=self.get_shape_space_lf()    # x and y low fidelity
-        self.Nx_hf, self.Ny_hf=self.get_shape_space_hf()    # x and y high-fidelity    
-        return self.Nx_lf*self.Ny_lf, self.Nx_hf*self.Ny_hf
 
 
 
@@ -158,61 +145,32 @@ class ReactionDiffusionData:
         
         return data_u, x.flatten(), t.flatten()      
 
-    def _load_train_data(self) -> None:
+    def visualize_train_data(self,output_folder = "plots_reaction_diffusion") -> None:
         """
-        Load training data.
+        Visualize training data for both low-fidelity (u_lf) and high-fidelity (u_hf) datasets.
+        Saves the plots in the 'output/plots_reaction_diffusion' directory.
         """
-        self.u_lf, self.x_LF, self.t_lf = self._load_data(self.mu_train, 'LF', f"{self.path}train/")
-        self.u_hf, self.x_HF, self.t_hf = self._load_data(self.mu_train, 'HF', f"{self.path}train/")
-
-        self.Nx_lf, self.Ny_lf, self.Nt_lf_train, self.N_mu_train = self.u_lf.shape
-        self.Nx_hf, self.Ny_hf, self.Nt_hf_train, self.N_mu_train = self.u_hf.shape
-
-        self.Nt_train = self.Nt_lf_train = self.Nt_hf_train
-
-
-    def _load_test_data(self) -> None:
-        """
-        Load test data.
-        """
-        self.u_lf_test, _, self.t_lf_test = self._load_data(self.mu_test, 'LF', f"{self.path}test/")
-        self.u_hf_test, _, self.t_hf_test = self._load_data(self.mu_test, 'HF', f"{self.path}test/", splitted=True)
-
-        self.Nx_lf, self.Ny_lf, self.Nt_lf_test, self.N_mu_test = self.u_lf_test.shape
-        self.Nx_hf, self.Ny_hf, self.Nt_hf_test, self.N_mu_test = self.u_hf_test.shape
-
-        self.Nt_test = self.Nt_lf_test = self.Nt_hf_test
-
-    def visualize_train_data(self, save_dir: str = "plots_reaction_diffusion") -> None:
-        """
-        Visualize training data for both low-fidelity (u_lf) and high-fidelity (u_hf) data.
-        This function accounts for possible differences in dimensionality between the two datasets.
-        Saves the plots in the specified directory.
         
-        :param save_dir: Directory where the plots will be saved. Defaults to 'reaction_diff'.
-        """
+        # Define the base directory and subfolder for saving plots
+        base_dir = "output"
+        output_folder = "plots_reaction_diffusion"
+        save_dir = Clean.create_output_directory(base_dir, output_folder)
 
-        # Create the directory if it doesn't exist
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        # Adjust ticks based on the higher fidelity dataset
+        # Define ticks for high-fidelity data
         loc_hf = np.arange(0, self.Nx_hf + 1, int(self.Nx_hf / 4))
         tick_hf = np.arange(0, 21, 5)
         idx_mu_list = [0, int(self.N_mu_train / 2), -1]
 
-        # Plot for u_lf
+        # Plot for low-fidelity data
         for i, idx_mu in enumerate(idx_mu_list):
             plt.figure(figsize=(7, 6))
             u_lf_data = self.u_lf[:, :, -1, idx_mu]
 
-            # Determine the shape for low-fidelity data
+            # Determine the shape and ticks for low-fidelity data
             Nx_lf = u_lf_data.shape[1]
             Ny_lf = u_lf_data.shape[0]
-
             loc_lf = np.arange(0, Nx_lf + 1, int(Nx_lf / 4))
             tick_lf = np.linspace(0, 20, len(loc_lf))
-
             loc_lfy = np.arange(0, Ny_lf + 1, int(Ny_lf / 4))
             tick_lfy = np.linspace(0, 20, len(loc_lfy))
 
@@ -237,7 +195,7 @@ class ReactionDiffusionData:
             plt.savefig(os.path.join(save_dir, f'low_fidelity_mu_{idx_mu}.png'))
             plt.close()
 
-        # Plot for u_hf
+        # Plot for high-fidelity data
         for i, idx_mu in enumerate(idx_mu_list):
             plt.figure(figsize=(7, 6))
             u_hf_data = self.u_hf[:, :, -1, idx_mu]
@@ -277,17 +235,6 @@ class ReactionDiffusionData:
         self.u_lf_test = griddata(coord_LF, self.u_lf_test.reshape(-1, self.Nt_lf_test, self.N_mu_test), coord_HF, method='nearest').reshape(self.Nx_hf, self.Ny_hf, self.Nt_lf_test, self.N_mu_test)
 
         self.N = self.Nx_hf * self.Ny_hf
-        
-
-    def _import_uLF_POD_evaluation(self, foldername:str=None) -> None:
-        # print(foldername)
-        list_models = [f"{foldername}{i}.keras" for i in range(1, self.n_POD + 1)]
-
-        for models in list_models:
-            
-            mod=NetworkFactory.build_network(NetworkConfig(network_type="LSTM_support"),self.getModel)
-            mod.load(models)
-            self.fwd_uLF.append(mod)
 
 
 
@@ -335,22 +282,68 @@ class ReactionDiffusionData:
 
     
 
-    def _POD_ROM_set_train(self, u_POD_lf_train,  u_POD_hf_train):
+    def get_input_dimensions(self) -> Tuple[int, int, int, int]:
+        """
+        Returns the dimensions of the training and testing datasets.
+        
+        Returns:
+            Tuple[int, int, int, int]: A tuple containing the number of training and testing parameters (mu)
+                                        and time steps (Nt).
+        """
+        return self.N_mu_train, self.N_mu_test, self.Nt_train, self.Nt_test
 
+    def get_space_discretization(self) -> Tuple[int, int]:
+        """
+        Returns the discretized space for both low-fidelity (LF) and high-fidelity (HF) models.
+        
+        Returns:
+            Tuple[int, int]: A tuple containing the product of Nx and Ny for both LF and HF models.
+                             This corresponds to the space dimensions of the respective models.
+        """
+        self.Nx_lf, self.Ny_lf = self.get_shape_space_lf()  # x and y low fidelity
+        self.Nx_hf, self.Ny_hf = self.get_shape_space_hf()  # x and y high-fidelity
+        return self.Nx_lf * self.Ny_lf, self.Nx_hf * self.Ny_hf
 
+    def _import_uLF_POD_evaluation(self, foldername: str = None) -> None:
+        """
+        Imports and loads the low-fidelity POD models from the given folder.
 
-        self.u_POD_lf_train= u_POD_lf_train 
-        self.u_POD_hf_train=u_POD_hf_train
+        Args:
+            foldername (str, optional): The folder name where the models are stored. Defaults to None.
 
+        This method iterates through the list of POD models in the folder, loads each model using the LSTM 
+        network configuration, and appends the loaded model to the `fwd_uLF` list.
+        """
+        # Create a list of model filenames
+        list_models = [f"{foldername}{i}.keras" for i in range(1, self.n_POD + 1)]
 
-    def _POD_ROM_set_test(self, u_POD_lf_test,  u_POD_hf_test):
+        # Load each model and append to the fwd_uLF list
+        for models in list_models:
+            mod = NetworkFactory.build_network(NetworkConfig(network_type="LSTM_support"), self.getModel)
+            mod.load(models)
+            self.fwd_uLF.append(mod)
 
+    def _POD_ROM_set_train(self, u_POD_lf_train: List, u_POD_hf_train: List) -> None:
+        """
+        Sets the training datasets for both low-fidelity (LF) and high-fidelity (HF) POD models.
 
+        Args:
+            u_POD_lf_train (List): The training dataset for low-fidelity POD models.
+            u_POD_hf_train (List): The training dataset for high-fidelity POD models.
+        """
+        self.u_POD_lf_train = u_POD_lf_train
+        self.u_POD_hf_train = u_POD_hf_train
 
-        self.u_POD_lf_test= u_POD_lf_test 
-        self.u_POD_hf_test=u_POD_hf_test
+    def _POD_ROM_set_test(self, u_POD_lf_test: List, u_POD_hf_test: List) -> None:
+        """
+        Sets the testing datasets for both low-fidelity (LF) and high-fidelity (HF) POD models.
 
-
+        Args:
+            u_POD_lf_test (List): The testing dataset for low-fidelity POD models.
+            u_POD_hf_test (List): The testing dataset for high-fidelity POD models.
+        """
+        self.u_POD_lf_test = u_POD_lf_test
+        self.u_POD_hf_test = u_POD_hf_test
 
 
     def plot_POD_coefficients(self, ulf_train: np.ndarray, uhf_train: np.ndarray, n_POD: int, save_dir: str = "plots_reaction_diffusion") -> None:
@@ -416,8 +409,34 @@ class ReactionDiffusionData:
             plot_path = os.path.join(save_dir, f"comparison_POD_modes_mu_{mu}.png")
             plt.savefig(plot_path)
             plt.close(fig)
+    
+    def _load_train_data(self) -> None:
+        """
+        Load training data.
+        """
+        self.u_lf, self.x_LF, self.t_lf = self._load_data(self.mu_train, 'LF', f"{self.path}train/")
+        self.u_hf, self.x_HF, self.t_hf = self._load_data(self.mu_train, 'HF', f"{self.path}train/")
 
-    def comparison_solutions(self, times: List[float], uMF_LSTM_test_rec: np.ndarray, save_dir: str =  "plots_reaction_diffusion") -> None:
+        self.Nx_lf, self.Ny_lf, self.Nt_lf_train, self.N_mu_train = self.u_lf.shape
+        self.Nx_hf, self.Ny_hf, self.Nt_hf_train, self.N_mu_train = self.u_hf.shape
+
+        self.Nt_train = self.Nt_lf_train = self.Nt_hf_train
+
+
+    def _load_test_data(self) -> None:
+        """
+        Load test data.
+        """
+        self.u_lf_test, _, self.t_lf_test = self._load_data(self.mu_test, 'LF', f"{self.path}test/")
+        self.u_hf_test, _, self.t_hf_test = self._load_data(self.mu_test, 'HF', f"{self.path}test/", splitted=True)
+
+        self.Nx_lf, self.Ny_lf, self.Nt_lf_test, self.N_mu_test = self.u_lf_test.shape
+        self.Nx_hf, self.Ny_hf, self.Nt_hf_test, self.N_mu_test = self.u_hf_test.shape
+
+        self.Nt_test = self.Nt_lf_test = self.Nt_hf_test
+    
+    
+    def comparison_solutions(self, times: List[float], uMF_LSTM_test_rec: np.ndarray, save_dir: str = "output/plots_reaction_diffusion") -> None:
         """
         Compare solutions at specific times and save the plots to the specified directory.
 
@@ -425,14 +444,13 @@ class ReactionDiffusionData:
         :param uMF_LSTM_test_rec: Reconstructed predictions from the MF-LSTM model, with dimensions (Nx_hf, Ny_hf, Nt_test, N_mu_test).
         :param save_dir: Directory where the plots will be saved.
         """
-        # Create the directory if it doesn't exist
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
+        # Ensure the save directory exists
+        save_dir = Clean.create_output_directory("output", "plots_reaction_diffusion")
+        
         loc = np.arange(0, self.Nx_hf + 1, int(self.Nx_hf / 4))
         tick = np.arange(0, 21, 5)
         abs_err_test = np.abs(uMF_LSTM_test_rec - self.u_hf_test)
-        
+
         for mu in range(self.N_mu_test):
             for time in times:
                 fig = plt.figure(figsize=(30, 6))
@@ -440,6 +458,7 @@ class ReactionDiffusionData:
                 plt.title(f'$\\mu = ${round(self.mu_test[mu], 3)}, $t = ${round(t * self.dt, 1)}\n', fontsize=24)
                 plt.axis('off')
 
+                # Plot Low-Fidelity input
                 ax = fig.add_subplot(141)
                 surf = ax.imshow(self.u_lf_test[:, :, t, mu], origin='lower', vmin=-1, vmax=1)
                 plt.xticks(loc, tick, fontsize=20)
@@ -449,7 +468,8 @@ class ReactionDiffusionData:
                 ax.set_title('LF input', fontsize=22)
                 cbar = plt.colorbar(surf)
                 cbar.ax.tick_params(labelsize=20, pad=1)
-                
+
+                # Plot MF Prediction
                 ax = fig.add_subplot(142)
                 surf = ax.imshow(uMF_LSTM_test_rec[:, :, t, mu], origin='lower', vmin=-1, vmax=1)
                 plt.xticks(loc, tick, fontsize=20)
@@ -460,6 +480,7 @@ class ReactionDiffusionData:
                 cbar = plt.colorbar(surf)
                 cbar.ax.tick_params(labelsize=20, pad=1)
 
+                # Plot High-Fidelity reference
                 ax = fig.add_subplot(143)
                 surf = ax.imshow(self.u_hf_test[:, :, t, mu], origin='lower', vmin=-1, vmax=1)
                 plt.xticks(loc, tick, fontsize=20)
@@ -469,7 +490,8 @@ class ReactionDiffusionData:
                 ax.set_title('HF reference', fontsize=22)
                 cbar = plt.colorbar(surf)
                 cbar.ax.tick_params(labelsize=20, pad=1)
-                
+
+                # Plot Absolute Error
                 ax = fig.add_subplot(144)
                 surf = ax.imshow(abs_err_test[:, :, t, mu], origin='lower', cmap='bwr')
                 plt.xticks(loc, tick, fontsize=20)
@@ -556,9 +578,9 @@ class ReactionDiffusionData:
             for _ in range(params['lay'] - 1):
                 a = Dropout(params['dropout'])(a)
                 a = LSTM(params['nodes'], return_sequences=True)(a)
-            a = Dense(64, activation=Activations.sinusoidal_activation, kernel_initializer='uniform')(a)
+            a = Dense(64, activation=sinusoidal_activation, kernel_initializer='uniform')(a)
             for _ in range(params['lay_dense']):
-                a = Dense(params['nodes_dense'], activation=Activations.custom_activation)(a)
+                a = Dense(params['nodes_dense'], activation=custom_activation)(a)
             output = Dense(num_outputs, activation='linear')(a)
 
 

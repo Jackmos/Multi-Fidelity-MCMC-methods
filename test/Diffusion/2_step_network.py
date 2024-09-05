@@ -11,16 +11,11 @@ import pandas as pd
 import os
 import keras
 import tensorflow as tf
-import logging
 
-logging.getLogger('tensorflow').setLevel(logging.ERROR)
 from utils.network_utils import *
 from utils.functions_to_ray import *
-from pathlib import Path
 
 from source.Diffusion_helper import *
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
 
 # reproducibility
 def set_seed():
@@ -88,105 +83,16 @@ def main_function():
     batch_size=[200,100]
 
 
-    U_LF_list = []
-    U_HF_list = []
     # number of epochs 
     Nepo=[7000,8000]
 
-    # NepoLF = 7000  # number of epochs for first NN: NN_LF
-    # NepoHF = 8000  # number of epochs for second NN: NN_HF
+
 
     r2_HF_df = pd.DataFrame(columns=['Discretization','diffusion','R2'])  # dataframe which stores HF R^2
     r2_LF_df = pd.DataFrame(columns=['Discretization','diffusion','R2'])  # dataframe which stores LF R^2
     mse_HF_df = pd.DataFrame(columns=['Discretization','diffusion','MSE'])  # dataframe which stores HF MSE
     mse_LF_df = pd.DataFrame(columns=['Discretization','diffusion','MSE'])  # dataframe which stores LF MSE
 
-
-
-    
-    # ## Neural Network
-    # Hyperparameter Optimization
-
-    
-    # m=0
-    # d=2       
-    # test_mse_HF_list = []
-    # test_mse_LF_list = []
-
-    # r2_HF_list = []
-    # r2_LF_list = []
-
-
-    # # Loop through parameters
-    # for nhf in n_HF:
-    #     for nlf in Nlf:
-    #         for nper in n_per:
-
-    #             # Print current configuration
-    #             print(f"******** # Nb. nodes = {Discretizations[m]} ********")
-    #             print(f"******** # Diff: = {diffusion[d]} ********")
-    #             print(f"******** # NHF: = {nhf} ********")
-    #             print(f"******** # Nper: = {nper} ********")
-    #             print(f"******** # NLF: = {nlf} ********")
-
-
-    #             # Import Low Fidelity data
-    #             file_path_LF = f"../DATA_reaction/reaction_diffusion_LF_{Discretizations[m]}_d{diffusion[d]}.mat"
-    #             reaction_LF_test, U_LF_test = Diffusion_model_helpers.import_data(file_path_LF)
-
-    #             # Normalize and select specific data points
-    #             U_LF_test = U_LF_test[:, -1, int(4*(Discretizations[m]-1)/9), int(4*(Discretizations[m]-1)/9)]
-    #             U_LF_test = Helpers_NN.normalization(U_LF_test)
-    #             reaction_LF_test = Helpers_NN.normalization(reaction_LF_test)
-                
-    #             # Transform Low Fidelity dataset
-    #             reaction_LF_test_original = np.c_[reaction_LF_test, np.abs(np.sin(5 * np.pi * reaction_LF_test[:, 0] - 5 * np.pi / 6))]
-    #             U_LF_test_original = U_LF_test  # Keep original for later use
-                
-    #             # Data augmentation with noise
-    #             noise_std1 = [0.02, 0.01, 0.02, 0.01]
-    #             noise_std2 = [0.01, 0.005, 0.01, 0.005]
-    #             U_LF_test, reaction_LF_test = Helpers_NN.add_noise(noise_std1, noise_std2, reaction_LF_test, U_LF_test)
-                
-    #             # Prepare datasets for training and validation
-    #             reaction_LF, U_train_LF = Diffusion_model_helpers.select_random_data(reaction_LF_test, U_LF_test, nlf)
-    #             reaction_HF, U_HF = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nhf)
-
-    #             # Transform datasets for training
-    #             reaction_LF = Diffusion_model_helpers.augment_with_sin(reaction_LF)
-    #             reaction_LF_test = Diffusion_model_helpers.augment_with_sin(reaction_LF_test)
-
-    #             # Prepare validation datasets
-    #             reaction_HF_val, U_HF_val = Diffusion_model_helpers.select_random_data(reaction_HF_test, U_HF_test, nhf)
-    #             reaction_LF_val, U_train_LF_val = Diffusion_model_helpers.select_random_data(reaction_LF_test, U_LF_test, nlf)
-
-    #             # Transform validation dataset
-    #             reaction_LF_val = Diffusion_model_helpers.augment_with_sin(reaction_LF_val)
-
-
-    #             ########################## Neural Network ##########################
-    #             K.clear_session()
-
-    #             # Define and train the Multifidelity network
-    #             model_definition = {
-    #                 "network_type": "2step",
-    #                 "names": ["LF", "Hfper", "HF"],
-    #                 "data_train": [reaction_LF, reaction_HF],
-    #                 "output_train": [U_train_LF, U_HF],
-    #                 "data_val": [reaction_LF_val, reaction_HF_val],
-    #                 "output_val": [U_train_LF_val, U_HF_val],
-    #                 "N": Nepo,
-    #                 "n": batch_size,
-    #                 "train": True,
-    #                 "do_HPO": True,
-    #                 "verbose": False
-    #             }
-    #             model = NetworkFactory.build_network(**model_definition)
-
-
-    # # Print final results
-    # print(r2_HF_df.round(5))
-    # print(mse_HF_df.round(5))
 
 
     # ### Cycle on the Discretization and the value of the diffusion 

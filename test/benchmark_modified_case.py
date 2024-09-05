@@ -93,82 +93,82 @@ def main_function():
 
     (mse_MF,R_MF)=final_model.performance(data["datatest"],data["modified_highfid"](data["datatest"][:,0],data["datatest"][:,1]))
 
-    # ### PLOT of predicted models ###
+    ### PLOT of predicted models ###
 
-    # fidelity_func.save_comparison_plot(data,y_test, f"multifidelity_{example}", output_folder)
-
-
-    # ### LF NEURAL NETWORK ###
-
-    # # introduction of a seed for reproducibility purposes
-    # set_seed()
+    fidelity_func.save_comparison_plot(data,y_test, f"multifidelity_{example}", output_folder)
 
 
-    # # parameters of the Neural Network
-    # bestLF_params =  {
-    #     'lr': 0.0255, 
-    #     'kernel_init': 'glorot_uniform', 
-    #     'opt': 'Adam'
-    # }
-    # definition_LF={
-    #         "network_type": "LF",
-    #         "network_parameters": bestLF_params,
-    #         "dataset_train": data["xlf"],
-    #         "output_train": data["Ylf"],
-    #         "epochs_number": data["NepoLF"],
-    #         "batch_size": data["Nlf"],
-    #         "train": True,
-    #         "do_HPO": False,
-    #         "verbose": False
-    #     }
-    # # building of the neural network
-    # modelLF=NetworkFactory.build_network(NetworkConfig(**definition_LF),fidelity_func.getModel)
-    # # prediction step
-    # yLF=modelLF.prediction(data["datatest"])
-    # (mse_LF,R2_LF)=modelLF.performance(data["datatest"],data["modified_highfid"](data["datatest"][:,0],data["datatest"][:,1]))
+    ### LF NEURAL NETWORK ###
 
-    # fidelity_func.save_comparison_plot(data,yLF, f"LF_{example}", output_folder)
-
-    # ### HF NEURAL NETWORK ###
+    # introduction of a seed for reproducibility purposes
+    set_seed()
 
 
-    # # parameters of the Neural Network
-    # bestHF_params ={
-    #     'lr': 0.0255, 
-    #     'kernel_init': 'glorot_uniform', 
-    #     'opt': 'Adam'
-    # }
-    # definition_HF={
-    #         "network_type": "LF",
-    #         "network_parameters": bestHF_params,
-    #         "dataset_train": data["xhf"],
-    #         "output_train": data["Yhf"],
-    #         "epochs_number": data["NepoHF"],
-    #         "batch_size": data["Nhf"],
-    #         "train": True,
-    #         "do_HPO": False,
-    #         "verbose": False
-    #     }
+    # parameters of the Neural Network
+    bestLF_params =  {
+        'lr': 0.0255, 
+        'kernel_init': 'glorot_uniform', 
+        'opt': 'Adam'
+    }
+    definition_LF={
+            "network_type": "LF",
+            "network_parameters": bestLF_params,
+            "dataset_train": data["xlf"],
+            "output_train": data["Ylf"],
+            "epochs_number": data["NepoLF"],
+            "batch_size": data["Nlf"],
+            "train": True,
+            "do_HPO": False,
+            "verbose": False
+        }
+    # building of the neural network
+    modelLF=NetworkFactory.build_network(NetworkConfig(**definition_LF),fidelity_func.getModel)
+    # prediction step
+    yLF=modelLF.prediction(data["datatest"])
+    (mse_LF,R2_LF)=modelLF.performance(data["datatest"],data["modified_highfid"](data["datatest"][:,0],data["datatest"][:,1]))
+
+    fidelity_func.save_comparison_plot(data,yLF, f"LF_{example}", output_folder)
+
+    ### HF NEURAL NETWORK ###
+
+
+    # parameters of the Neural Network
+    bestHF_params ={
+        'lr': 0.0255, 
+        'kernel_init': 'glorot_uniform', 
+        'opt': 'Adam'
+    }
+    definition_HF={
+            "network_type": "LF",
+            "network_parameters": bestHF_params,
+            "dataset_train": data["xhf"],
+            "output_train": data["Yhf"],
+            "epochs_number": data["NepoHF"],
+            "batch_size": data["Nhf"],
+            "train": True,
+            "do_HPO": False,
+            "verbose": False
+        }
     
-    # modelHF=NetworkFactory.build_network(NetworkConfig(**definition_HF),fidelity_func.getModel)
-    # yHF=modelHF.prediction(data["datatest"])
-    # (mse_HF,R2_HF)=modelHF.performance(data["datatest"],data["modified_highfid"](data["datatest"][:,0],data["datatest"][:,1]))
+    modelHF=NetworkFactory.build_network(NetworkConfig(**definition_HF),fidelity_func.getModel)
+    yHF=modelHF.prediction(data["datatest"])
+    (mse_HF,R2_HF)=modelHF.performance(data["datatest"],data["modified_highfid"](data["datatest"][:,0],data["datatest"][:,1]))
 
-    # fidelity_func.save_comparison_plot(data,yHF, f"HF_{example}", output_folder)
-
-
-    # # # Prediction of a parameter 2 step nn
+    fidelity_func.save_comparison_plot(data,yHF, f"HF_{example}", output_folder)
 
 
-    # ## (the seeds are always restarted to be sure to get the same results as reported)
+    # # Prediction of a parameter 2 step nn
 
-    module_directory = os.path.abspath(os.path.join('..', 'utils'))
 
-    # Add the 'utils' directory containing Structure.py to the PYTHONPATH
-    os.environ['PYTHONPATH'] = module_directory
-    sys.path.append(module_directory)
+    ## (the seeds are always restarted to be sure to get the same results as reported)
 
-    # redirected to the examples related to the chosen case
+    # module_directory = os.path.abspath(os.path.join('..', 'utils'))
+
+    # # Add the 'utils' directory containing Structure.py to the PYTHONPATH
+    # os.environ['PYTHONPATH'] = module_directory
+    # sys.path.append(module_directory)
+
+    #redirected to the examples related to the chosen case
 
     if example=="Discontinuous":
 
@@ -237,7 +237,7 @@ def main_function():
             number_chains= number_chains,
             domain_bounds=(0.,5.),
 
-            parallel=True
+            parallel=False
         )
 
         set_seed()
@@ -273,7 +273,7 @@ def main_function():
             number_data=n_data,
             sigma=sigma,
             rwmh_scaling=rwmh_scaling, 
-            force_sequential=False,
+            force_sequential=True,
             levels=1
         )
 
