@@ -1,31 +1,32 @@
 import gc
 import logging
-import optuna
 import os
-
 import re
-import platform 
-import subprocess
-from dataclasses import dataclass, field
-import numpy as np
-from numpy import newaxis as _   # easier reading
-from pprint import pprint
+import platform
 import subprocess
 from abc import ABC, abstractmethod
-from cuqi.distribution import Gaussian
-from cuqi.model import Model as CuqiModel
-from cuqi.sampler import MH
+from dataclasses import dataclass, field
+from pprint import pprint
+
+import numpy as np
+from numpy import newaxis as _  # easier reading
+
 from keras.models import load_model
-from numba import njit
-import tinyDA as tda
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from tensorflow.keras.models import Model
 import tensorflow.keras.backend as K
 import tensorflow as tf
 
+from cuqi.distribution import Gaussian
+import optuna
+import tinyDA as tda
+
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
 from utils.bayesian_utils import *
 from utils.helper_functions import *
 from utils.functions_to_ray import *
+
+
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.get_logger().setLevel(logging.ERROR)
@@ -46,9 +47,9 @@ if physical_devices:
 
 
 
-from functools import wraps
 
-
+# "SUPPORT" CLASSES
+# management and safety
 
 # Define the types of networks as an enumeration for type safety and clarity.
 class NetworkType(Enum):
@@ -287,6 +288,13 @@ class NetworkFactory:
             device=config.device,
             num_trials=config.num_trials
         )
+    
+
+
+
+# NETWORK CREATION CLASSES 
+
+
 @dataclass(slots=True)
 class INetwork(ABC):
     """
@@ -786,9 +794,7 @@ class Neural_Network(INetwork):
             device (str): Device for computation (e.g., '/CPU:0' or '/GPU:0').
             num_trials (int): Number of HPO iterations
         """
-        # Disable eager execution for better performance
-       # tf.compat.v1.disable_eager_execution()
-        # Clear any previous TensorFlow/Keras sessions to avoid clutter from old models.
+
         K.clear_session()
 
         # Initialize instance variables
@@ -811,7 +817,7 @@ class Neural_Network(INetwork):
         # Set input and output shapes based on training data dimensions
         self.input_shape = self._get_shape(self._data_train)
         self.output_shape = self._get_shape(self._output_train)
-
+        self.getModel=getModel
         # Perform hyperparameter optimization if required or if no parameters are provided
         if do_HPO:
             if output_val is None or data_val is None:
@@ -840,19 +846,6 @@ class Neural_Network(INetwork):
         """Automatically select GPU if available, else fall back to CPU."""
         physical_devices = tf.config.list_physical_devices('GPU')
         return '/GPU:0' if physical_devices else '/CPU:0'
-    # def __del__(self):
-    #     """
-    #     Destructor for the Neural_Network class.
-    #     Ensures that TensorFlow sessions are cleared and memory is freed.
-    #     """
-    #     # Clear any TensorFlow sessions to free up GPU memory
-    #     K.clear_session()
-
-    #     # Run garbage collection to free up any remaining memory
-    #     gc.collect()
-
-    #     if self.verbose:
-    #         print(f"{self.name} instance has been destroyed and resources have been freed.")
 
 
     def _get_shape(self, data: Optional[np.ndarray]) -> int:
@@ -999,7 +992,7 @@ class Neural_Network(INetwork):
             with tf.device(self.device if self.device else '/GPU:0'):  # Default to GPU if not specified and an appropriate GPU is present                
                 loss = CrossValidations.kCrossVal_parallel(self._N, data_val, output_val,                        # Perform k-fold cross-validation to evaluate the model
                                           params, self.name, self._get_shape(data_val), 
-                                          self._get_shape(output_val)
+                                          self._get_shape(output_val),self.getModel
                                           )    
             # Implement early stopping within the HPO loop
             trial.report(loss, step=trial.number)
@@ -1330,6 +1323,7 @@ class MultiFidelity(INetwork):
                 do_HPO=True,
                 verbose=self.verbose,
                 device=device or self.device,
+                getModel=self.getModel
 
             )
 
@@ -1522,7 +1516,7 @@ class LSTM_network(INetwork):
                 loss = CrossValidations.kCrossVal_parallel(
                     Nepo=self.N, x=data_val, y=output_val, 
                     params=params, name=self.name, input_shape=self.input_shape, 
-                    output_shape=self.output_shape, p=num_trials, n_jobs=-1
+                    output_shape=self.output_shape, p=num_trials, n_jobs=-1, getModel=self.getModel
                 )
 
             trial.report(loss, step=trial.number)
@@ -1657,6 +1651,7 @@ class Intermediate(INetwork):
                  output_train: Optional[np.ndarray] = None, 
                  N: int = 1000, 
                  n: int = 10, 
+                 getModel:Callable=None,
                  dim_input:int=0,
                  dim_output:int=0,
                  train: bool = True, 
@@ -1691,7 +1686,7 @@ class Intermediate(INetwork):
         self.output_shape = 1
         self.inputs = None
         self.transformations = transformations
-
+        self.getModel=getModel
         # Validate and concatenate data
         if data_train is None or output_train is None or len(data_train) != 2 or len(output_train) != 2:
             raise ValueError('The data are incoherent or insufficient')
@@ -1811,7 +1806,7 @@ class Intermediate(INetwork):
 
             with tf.device(device):
                 #loss = kCrossVal(self.n, self.N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)
-                loss = CrossValidations.kCrossVal_parallel(self._N, data_train, output_train, params, self.name, self.input_shape, self.output_shape)            
+                loss = CrossValidations.kCrossVal_parallel(self._N, data_train, output_train, params, self.name, self.input_shape, self.output_shape, self.getModel)            
             return loss
 
         logging.getLogger('tensorflow').setLevel(logging.ERROR)

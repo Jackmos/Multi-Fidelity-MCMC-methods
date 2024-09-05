@@ -2,16 +2,18 @@ import numpy as np
 from numpy import newaxis as _
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from typing import Any, List, Dict, Union
+from typing import Any, List, Dict, Union, Tuple
 from numba import njit, prange
 
 import os
-import tensorflow.keras.backend as K
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Input, LSTM, Dropout
 from utils.helper_functions import Helpers_NN, Clean
+
 ParamsType = Dict[str, Union[int, float, str, Any]]
 OutputType = Union[Model, List[Model]]
+
+
 class BurgerEquation:
 
     def __init__(self, nh: int = 101, nt: int = 151, T: float = 2.0, L: float = 1.0,
@@ -54,20 +56,6 @@ class BurgerEquation:
 
         self.u_POD_lf_train,self.u_POD_hf_train, self.u_POD_lf_test, self.u_POD_hf_test=None,None,None,None
         
-
-
-
-    def get_input_dimensions(self):
-        
-        return self.nre_train, self.nre_test, self.nt,self.nt
-
-
-    def get_space_discretization(self):
-
-        return self.nh,self.nh
-
-
-
     @staticmethod
     @njit(fastmath=True)
     def u_HF(x: float, t: float, re: float) -> np.ndarray:
@@ -150,7 +138,6 @@ class BurgerEquation:
         re_grid_lstm = np.expand_dims(re_grid_lstm, axis=-1)
 
         # Concatenate along the last axis
-        #new_inputs = np.concatenate((t_grid_lstm, re_grid_lstm, ulf_train), axis=2)
         new_inputs = np.concatenate(( re_grid_lstm, ulf_train), axis=2)
         return new_inputs
 
@@ -218,43 +205,91 @@ class BurgerEquation:
         return u_hf, u_lf        
  
 
-    def _POD_ROM_set_train(self, u_POD_lf_train,  u_POD_hf_train):
+    def _POD_ROM_set_train(self, u_POD_lf_train: np.ndarray, u_POD_hf_train: np.ndarray) -> None:
+        """
+        Set the POD-ROM training data for both low-fidelity (LF) and high-fidelity (HF) datasets.
+        (used in "MOD_helper")
+        Args:
+        - u_POD_lf_train: Low-fidelity training data (POD reduced).
+        - u_POD_hf_train: High-fidelity training data (POD reduced).
+
+        Returns:
+        - None: Sets the class attributes for training data.
+        """
+        self.u_POD_lf_train = u_POD_lf_train 
+        self.u_POD_hf_train = u_POD_hf_train
 
 
+    def _POD_ROM_set_test(self, u_POD_lf_test: np.ndarray, u_POD_hf_test: np.ndarray) -> None:
+        """
+        Set the POD-ROM test data for both low-fidelity (LF) and high-fidelity (HF) datasets.
+        (used in "MOD_helper")
 
-        self.u_POD_lf_train= u_POD_lf_train 
-        self.u_POD_hf_train=u_POD_hf_train
+        Args:
+        - u_POD_lf_test: Low-fidelity test data (POD reduced).
+        - u_POD_hf_test: High-fidelity test data (POD reduced).
+
+        Returns:
+        - None: Sets the class attributes for test data.
+        """
+        self.u_POD_lf_test = u_POD_lf_test 
+        self.u_POD_hf_test = u_POD_hf_test
+
+    def get_input_dimensions(self) -> Tuple[int, int, int, int]:
+        """
+        Retrieve the input dimensions for the training and testing datasets.
+        (used in "MOD_helper")
+
+        Returns:
+        - nre_train: Number of Reynolds numbers (or other parameter) in the training set.
+        - nre_test: Number of Reynolds numbers (or other parameter) in the test set.
+        - nt: Number of time steps in the dataset (same for both train and test).
+        """
+        return self.nre_train, self.nre_test, self.nt, self.nt
 
 
-    def _POD_ROM_set_test(self, u_POD_lf_test,  u_POD_hf_test):
+    def get_space_discretization(self) -> Tuple[int, int]:
+        """
+        Retrieve the spatial discretization for the system.
+        (used in "MOD_helper")
 
+        Returns:
+        - nh: Number of spatial grid points (same for both returned values).
+        """
+        return self.nh, self.nh
 
+    def definitionLSTM_dataset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Prepare the LSTM inputs and outputs for training and testing based on POD reduced-order models.
 
-        self.u_POD_lf_test= u_POD_lf_test 
-        self.u_POD_hf_test=u_POD_hf_test
+        Raises:
+        - ValueError: If any of the POD training or test data is None.
 
+        Returns:
+        - input_train: LSTM input for training (concatenation of t_grid, re_grid, and low-fidelity training data).
+        - output_train: LSTM output for training (high-fidelity training data).
+        - input_test: LSTM input for testing (concatenation of t_grid, re_grid, and low-fidelity test data).
+        - output_test: LSTM output for testing (high-fidelity test data).
+        """
 
-
-    def definitionLSTM_dataset(self):
-        # Prepare LSTM inputs
-
-
+        # Ensure that POD datasets are available
         if self.u_POD_lf_train is None or self.u_POD_hf_train is None or self.u_POD_lf_test is None or self.u_POD_hf_test is None:
             raise ValueError("u_POD is None, execute POD!")
 
+        # Prepare LSTM inputs for training
         self.t_grid_lstm, self.re_grid_lstm = np.meshgrid(self.t, self.re_train)
         self.input_train = np.concatenate((self.t_grid_lstm[..., _], self.re_grid_lstm[..., _], self.u_POD_lf_train), axis=2)
         self.output_train = self.u_POD_hf_train
 
-        # Prepare LSTM test inputs
+        # Prepare LSTM inputs for testing
         self.t_grid_lstm_test, self.re_grid_lstm_test = np.meshgrid(self.t, self.re_test)
         self.input_test = np.concatenate((self.t_grid_lstm_test[..., _], self.re_grid_lstm_test[..., _], self.u_POD_lf_test), axis=2)
         self.output_test = self.u_POD_hf_test 
-        
+            
         return self.input_train, self.output_train, self.input_test, self.output_test
 
 
-    def plt_time_instants(self, re_values: List[float] = [100, 400], folder_name: str = None, file_name: str = 'burger_evolution') -> None:
+    def plt_time_instants(self, re_values: List[float] = [100, 400], folder_name: str = 'Burger_output', file_name: str = 'burger_evolution') -> None:
         """
         Save plots of true values simulations for both high-fidelity and low-fidelity models
         at different time points and Reynolds numbers in a specified folder.
@@ -264,9 +299,6 @@ class BurgerEquation:
         - folder_name: Name of the folder where the plot image will be saved. If None, defaults to 'Burger_output'.
         - file_name: Name of the file to save the plot as. If None, defaults to 'burger_evolution'.
         """
-        # Set the default folder name if not provided
-        if folder_name is None:
-            folder_name = 'Burger_output'
         
         # Create the output directory structure
         base_dir = 'output'
@@ -541,7 +573,7 @@ class BurgerEquation:
         Args:
             params (Dict): Dictionary containing model parameters like 'nodes', 'dropout', 'l2weight', etc.
             num_inputs (int): Number of input features.
-            name (str): Name of the model architecture ('LSTM', 'HF', 'LF', 'Single', 'Hflin', 'Hfper', 'GP', 'Inter').
+            name (str): Name of the model architecture (only 'LSTM' in this case).
             num_outputs (int): Number of output neurons.
 
         Returns:
@@ -563,7 +595,8 @@ class BurgerEquation:
 
             # Dense output layer
             output = Dense(num_outputs, activation='linear')(a)
-
+        else:
+            ValueError("Only LSTM is available for this test case!")
 
         # General model compilation for other architectures
         model = Model(inputs=inputs, outputs=output)

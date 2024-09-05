@@ -1,15 +1,11 @@
+# Example III: MLDA, 3 step case
 import numpy as np
-import os
 import keras
 import tensorflow as tf
-import sys
+import itertools
 from utils.network_utils import NetworkConfig,NetworkFactory
 from utils.bayesian_utils import BayesianInverseProblem_NN
 from source.System_solver import System2
-
-from pathlib import Path
-import itertools
-
 
 
 
@@ -48,28 +44,18 @@ def main_function():
     params=combinations_array[0:9,:]
 
 
-    solver_HF = System2()       
-    solver_LF = System2()
-    solver_valHF = System2()
-    solver_valLF = System2()
+    solver = System2()       
 
-    (t_HF,y_HF,mu_HF)=solver_HF.generate_dataset(T=7.0, params=params, h=0.01, fidelity='HF')
-    solver_HF.save_dataset('dataset_HF_4params.h5')
+    (t_HF,y_HF,mu_HF)=solver.generate_dataset(T=7.0, params=params, h=0.01, fidelity='HF')
+    solver.plot_dataset()
 
-    (t_LF,y_LF,mu_LF)=solver_LF.generate_dataset(T=7.0, params=params, h=0.04, fidelity='LF')   
-    solver_LF.save_dataset('dataset_LF_4params.h5')
+    (t_LF,y_LF,mu_LF)=solver.generate_dataset(T=7.0, params=params, h=0.04, fidelity='LF')   
+    solver.plot_dataset()
 
-
-    (t_valHF,y_valHF,mu_valHF)=solver_valHF.generate_dataset(T=7.0, params=params, h=0.01, fidelity='HF')
-    solver_valHF.save_dataset('dataset_valHF_4params.h5')
-
-    (t_valLF,y_valLF,mu_valLF)=solver_valLF.generate_dataset(T=7.0, params=params, h=0.01, fidelity='LF')   
-    solver_valLF.save_dataset('dataset_valLF_4params.h5')
+    (t_valHF,y_valHF,mu_valHF)=solver.generate_dataset(T=7.0, params=params, h=0.01, fidelity='HF')
+    (t_valLF,y_valLF,mu_valLF)=solver.generate_dataset(T=7.0, params=params, h=0.01, fidelity='LF')   
 
 
-
-    solver_HF.plot_dataset()
-    solver_LF.plot_dataset()
 
 
     # Create the Cartesian product of the indices
@@ -92,15 +78,15 @@ def main_function():
     x_valLF = np.hstack((t_valLF[cartesian_product_indices_val[:, 1]].reshape(-1, 1), mu_valLF[cartesian_product_indices_val[:, 0]]))
 
 
-    y_HF=np.array(y_HF).reshape(-1, solver_HF.get_dim())
-    y_LF=np.array(y_LF).reshape(-1, solver_LF.get_dim())
+    y_HF=np.array(y_HF).reshape(-1, solver.get_dim())
+    y_LF=np.array(y_LF).reshape(-1, solver.get_dim())
 
-    y_valHF=np.array(y_valHF).reshape(-1, solver_valHF.get_dim())
-    y_valLF=np.array(y_valLF).reshape(-1, solver_valLF.get_dim())
-
-
+    y_valHF=np.array(y_valHF).reshape(-1, solver.get_dim())
+    y_valLF=np.array(y_valLF).reshape(-1, solver.get_dim())
 
 
+
+    # selection data for training and validation
     n_LF=700
     indices_LF = np.random.permutation(x_LF.shape[0])[:n_LF]
     n_Single=1500
@@ -163,7 +149,7 @@ def main_function():
         }
 
 
-    final_model=NetworkFactory.build_network(NetworkConfig(**definition_2steps),solver_HF.getModel)
+    final_model=NetworkFactory.build_network(NetworkConfig(**definition_2steps),solver.getModel)
 
 
 
@@ -171,12 +157,10 @@ def main_function():
     solver_test=System2()
     params_values_test = combinations_array[0:20,:]
     (t_test,y_test,mu_test)=solver_test.generate_dataset(T=7.0, params=params_values_test, h=0.005, fidelity='HF')
-    # solver_test.save_dataset('dataset_test_4params.h5')
 
 
     # Create the Cartesian product of the indices
     cartesian_product_indices = np.array(np.meshgrid(np.arange(mu_test.shape[0]), np.arange(t_test.shape[0]))).T.reshape(-1, 2)
-    # Extract the respective elements from the original vectors
     datatest = np.hstack((t_test[cartesian_product_indices[:, 1]].reshape(-1, 1), mu_test[cartesian_product_indices[:, 0]]))
 
     # Neural Network test
@@ -184,90 +168,10 @@ def main_function():
     (mse_MF,R_MF)=final_model.performance(datatest,np.array(y_test).reshape(-1,solver_test.get_dim()))
 
 
-    solver_HF.plot_per_parameter(x_HF,y_HF,y_test_pred, final_model)    # <--------
+    solver.save_plots_per_param(x_HF,y_HF,y_test_pred, final_model)   
 
-    ### BAYESIAN INVERSE PROBLEM ####
-
-#     set_seed()
-
-#     # data definition for MLDA with AM, first example 
-#     mean_prior =np.array([2.5,1.,1.5,1.3])
-#     cov_prior=np.diag([ 0.1, 0.01, 0.01, 0.1])
-
-#     parameters =np.array([3.,1.2,1.05,1.55])
-#     rwmh_adaptive = True
-#     iterations =3000
-#     burnin = 1000
-#     n_chains = 3
-#     algo = "AM"
-
-
-
-
-#     module_directory = os.path.abspath(os.path.join('..', 'utils'))
-
-#     # Add the 'utils' directory to the PYTHONPATH
-#     os.environ['PYTHONPATH'] = module_directory
-#     sys.path.append(module_directory)
-
-#    # data definition for single level AM, first example 
-
-#     BBB=BayesianInverseProblem_NN(algorithm_name='AM',forward_NN=final_model)
-
-#     BBB.run(inputs_HF=x_HF, 
-#         domain_bounds=(0.,7.),
-#         mean_prior=mean_prior, 
-#         cov_prior=cov_prior, 
-#         output_HF=y_HF, 
-#         real_parameters=parameters, 
-#         rwmh_adaptive=rwmh_adaptive, 
-#         iterations=iterations, 
-#         burn_in=burnin, 
-#         n_chains= n_chains, 
-#         levels=1,  
-#         subsampling_rate=1,
-#         force_sequential=True,
-#         number_data=48,
-#         rwmh_covariance=1.562, 
-#         sigma=2.062,
-#         rwmh_scaling =  1.031,
-#         sigma_noise=0.0985   
-        
-#     )
-
-#     # MLDA
-
-#     set_seed()
-
-
-#     BB=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=final_model)
-
-
-#     BB.run(inputs_HF=x_HF, 
-#         domain_bounds=(0.,7.),
-#         mean_prior=mean_prior, 
-#         cov_prior=cov_prior, 
-#         output_HF=y_HF, 
-#         real_parameters=parameters, 
-#         rwmh_adaptive=rwmh_adaptive, 
-#         iterations=iterations, 
-#         burn_in=burnin, 
-#         n_chains= n_chains, 
-#         levels=3,                       # notice: here 3 levels are used
-#         subsampling_rate=3,
-#         force_sequential=True,
-#         number_data=48,
-#         rwmh_covariance=1.562, 
-#         sigma=2.062,
-#         rwmh_scaling =  1.031,
-#         sigma_noise=0.0985  
-        
-#     )
-
-
+    ### BAYESIAN INVERSE PROBLEM ###
  
-
-    # EXAMPLE 2 comparison with other combination of parameters
 
     set_seed()
 
@@ -282,12 +186,6 @@ def main_function():
     n_chains = 3
     algo = "AM"
 
-
-    module_directory = os.path.abspath(os.path.join('..', 'utils'))
-
-    # Add the 'utils' directory containing Structure.py to the PYTHONPATH
-    os.environ['PYTHONPATH'] = module_directory
-    sys.path.append(module_directory)
     BB=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=final_model)
     # MLDA
     BB.run(inputs_HF=x_HF, 

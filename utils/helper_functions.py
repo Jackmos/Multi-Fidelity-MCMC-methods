@@ -11,14 +11,16 @@ from cuqi.model import Model as CuqiModel
 from enum import Enum
 from functools import wraps
 from joblib import Parallel, delayed
-from numba import jit, njit
+from numba import njit
 from numpy import newaxis as _   # easier reading
 from scipy.stats import multivariate_normal
 from sklearn.model_selection import KFold
 from tensorflow.keras.optimizers import Adam, Adamax, Nadam
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Generator
 import tensorflow.keras.backend as K
 import tensorflow as tf
+
+
 
 def transfBestparam(best_params: Dict[str, Any], dic: Dict[str, Any]) -> None:
     """
@@ -96,7 +98,13 @@ class decorators:
 
     @staticmethod
     @contextlib.contextmanager
-    def Suppressor():
+    def Suppressor() -> Generator[None, None, None]:
+        """
+        Temporarily suppresses all standard output (stdout) within a code block.
+
+        Yields:
+        - None: Suppresses any output printed within the context.
+        """
         try:        
             with open(os.devnull, 'w', encoding='utf-8') as devnull:
                 with contextlib.redirect_stdout(devnull):                
@@ -107,13 +115,22 @@ class decorators:
 
     # used in MCMC to fasten up procedure with subsequent rejections
     @staticmethod
-    def prediction_cache_decorator(maxsize=1000):
+    def prediction_cache_decorator(maxsize: int = 1000) -> Callable:
+        """
+        Decorator to cache predictions in memory, improving performance by avoiding repeated calculations.
+
+        Args:
+        - maxsize: Maximum number of entries to store in the cache (default: 1000).
+
+        Returns:
+        - Callable: A wrapped function with caching enabled.
+        """
         cache = {}
 
-        def decorator(func):
+        def decorator(func: Callable) -> Callable:
             @wraps(func)
             def wrapper(self, *args, **kwargs):
-                # Create a unique key including the instance (self) and function arguments
+                # Create a unique key using the instance's id, function arguments, and keyword arguments
                 key = (id(self),)  # Use the instance's id to distinguish between different instances
                 key += tuple(arg.tobytes() if isinstance(arg, np.ndarray) else arg for arg in args)
                 key += tuple((k, v.tobytes() if isinstance(v, np.ndarray) else v) for k, v in kwargs.items())
@@ -307,7 +324,7 @@ class CrossValidations:
     # Different types of Cross Validations
     @staticmethod
     def kCrossVal(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
-                name: str, input_shape: int, output_shape: int, p: int = 1) -> float:
+                name: str, input_shape: int, output_shape: int, p: int = 1, getModel:Callable=None) -> float:
         """
         Perform k-fold cross-validation on the model.
 
@@ -325,6 +342,9 @@ class CrossValidations:
         Returns:
             float: Average cross-validation loss.
         """
+        if getModel is None:
+            raise ValueError("No structure has been provided!")
+
         model = getModel(params, input_shape, name, output_shape)
         kf = KFold(n_splits=int(N/p), shuffle=True)
         scores = []
@@ -345,7 +365,7 @@ class CrossValidations:
 
     @staticmethod
     def kCrossValSingle(N: int, Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
-                        name: str, input_shape: int, output_shape:int) -> float:
+                        name: str, input_shape: int, output_shape:int, getModel:Callable=None) -> float:
         """
         Perform k-fold cross-validation on the model with a single fold.
 
@@ -361,6 +381,8 @@ class CrossValidations:
         Returns:
             float: Average cross-validation loss.
         """
+        if getModel is None:
+            raise ValueError("No structure has been provided!")
         kf = KFold(n_splits=N, shuffle=True)
         scores = []
 
@@ -381,7 +403,7 @@ class CrossValidations:
 
     @staticmethod
     def kCrossValGP(Nhf: int, Nlf: int, Nepo: int, xhf: np.ndarray, yhf: np.ndarray, xlf: np.ndarray, 
-                    ylf: np.ndarray, params: Dict[str, Any], name: str, input_shape: int, p: int = 1) -> float:
+                    ylf: np.ndarray, params: Dict[str, Any], name: str, input_shape: int, p: int = 1, getModel:Callable=None) -> float:
         """
         Perform k-fold cross-validation for Gaussian Process models.
 
@@ -401,6 +423,8 @@ class CrossValidations:
         Returns:
             float: Average cross-validation loss.
         """
+        if getModel is None:
+            raise ValueError("No structure has been provided!")
         Nfolds = int(Nhf / p)
         kf = KFold(n_splits=Nfolds, shuffle=True)
         scores = []
@@ -426,7 +450,7 @@ class CrossValidations:
 
     @staticmethod
     def kCrossVal_parallel( Nepo: int, x: np.ndarray, y: np.ndarray, params: Dict[str, Any], 
-                        name: str, input_shape: int, output_shape: int, p: int = 2, n_jobs: int = -1) -> float:
+                        name: str, input_shape: int, output_shape: int, p: int = 2, n_jobs: int = -1, getModel:Callable=None) -> float:
         """
         Perform k-fold cross-validation on the model using parallel processing.
 
@@ -444,6 +468,8 @@ class CrossValidations:
         Returns:
             float: Average cross-validation loss.
         """
+        if getModel is None:
+            raise ValueError("No structure has been provided!")
         kf = KFold(n_splits=p, shuffle=True)
 
         def fit_and_score(train_index, test_index):

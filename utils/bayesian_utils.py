@@ -124,7 +124,6 @@ class BayesianLibraryBase:
         :param args: Positional arguments passed to the specific HPO method.
         :param kwargs: Keyword arguments passed to the specific HPO method.
         """
-        print(f"HPO with  {self.algorithm}")
         self._hpo_specific(*args, **kwargs)
 
     def run(self, *args: Any, **kwargs: Any) -> None:
@@ -134,7 +133,6 @@ class BayesianLibraryBase:
         :param args: Positional arguments passed to the specific run method.
         :param kwargs: Keyword arguments passed to the specific run method.
         """
-        print(f"HPO with {self.algorithm}")
         self._run_specific(*args, **kwargs)
 
     def _hpo_specific(self, *args: Any, **kwargs: Any) -> None:
@@ -1575,15 +1573,15 @@ class MCMC_cuqi:
 
         # Create the posterior distribution using CUQI
         posterior = JointDistribution(self.x, self.y)(y=self.observation)
-
+        x_init=initial_point
         # Perform MCMC sampling
         if self.parallel:
             ray.init(ignore_reinit_error=True, logging_level=30)
-            futures = [self.chain_creation_parallel.remote(N, burn_in, posterior, initial_point) for _ in range(n)]
+            futures = [self.chain_creation_parallel.remote(self,N, burn_in, posterior, x_init) for _ in range(n)]
             results = ray.get(futures)
             ray.shutdown()
         else:
-            results = [self.chain_creation(N, burn_in,  posterior, initial_point) for _ in range(n)]
+            results = [self.chain_creation(N, burn_in,  posterior, x_init) for _ in range(n)]
 
         for result in results:
                 estimates = np.column_stack((estimates, result[0])) 
@@ -1600,7 +1598,6 @@ class MCMC_cuqi:
         # Calculate and return statistics
         mean, std_dev = self.calculate_statistics(estimates)
         return estimates, {'expected_param': mean, 'std_dev': std_dev, 'ess': None, 'r_hat': None}  # ESS and r_hat will be updated in diagnostics
-
 
     @ray.remote
     def chain_creation_parallel(
@@ -1774,6 +1771,11 @@ class MCMC_cuqi:
 
 
 
-
-
-
+# @ray.remote
+# def chain_creation_parallel(
+#     N: int, 
+#     burn_in: int,  
+#     posterior: Any, 
+#     x_init: np.ndarray
+# ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+#     return MCMC_cuqi.chain_creation(N, burn_in,  posterior, x_init)

@@ -4,12 +4,12 @@ from numba import jit
 import matplotlib.pyplot as plt
 from typing import Any, Dict, Tuple, Callable
 import matplotlib.lines as mlines
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import Dense, Input, concatenate
+from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
 import tensorflow as tf
 from utils.helper_functions import Helpers_NN,Clean
+
 """
 Contains the definition of the Benchmark cases and the loop to investigate parameters 
 to solve the inverse problem.
@@ -305,7 +305,7 @@ class Benchmark_functions:
         full_output_dir = Clean.create_output_directory(base_output_dir, output_folder)
 
         # Plot the real and estimated relation; allows a qualitative and immediate comparison
-        unique_values = np.unique(data["xlf"][:, 1])
+        unique_values = np.unique(data["datatest"][:, 1])
         plt.figure()
 
         for val in unique_values:
@@ -364,44 +364,6 @@ class Benchmark_functions:
                 hidden = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], name=f'{name}_hidden{i+1}')(hidden)
             output = Dense(num_outputs, activation='linear', name='LF')(hidden)
 
-        # Single Model
-        elif name == 'Single':
-            hidden = inputs
-            for i in range(4):
-                hidden = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'],
-                            kernel_regularizer=l2(params['l2weight']), name=f'{name}_hidden{i+1}')(hidden)
-            output = Dense(num_outputs, activation='linear', name='Single')(hidden)
-
-        # High-Fidelity Linear (Hflin) Model
-        elif name == 'Hflin':
-            hidden = Dense(64, activation='linear', kernel_regularizer=l2(params['l2weight']),
-                        kernel_initializer=params['kernel_init'], name=f'{name}_hidden1')(inputs)
-            output = Dense(num_outputs, activation='linear', name='HFlin')(hidden)
-
-        # High-Fidelity Periodic (Hfper) Model
-        elif name == "Hfper":
-            hidden = inputs
-            for i in range(2):
-                hidden = Dense(64, activation=sinusoidal_activation, kernel_regularizer=l2(params["l2weight"]),
-                            kernel_initializer=params["kernel_init"], name=f'{name}_hidden{i+1}')(hidden)
-            output = Dense(num_outputs, activation="linear", name="HFper")(hidden)
-
-        # Intermediate (Inter) Model
-        elif name == 'Inter':
-            hidden1 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], name=f'{name}_hidden1')(inputs)
-            hidden2 = Dense(64, activation='tanh', kernel_initializer=params['kernel_init'], name=f'{name}_hidden2')(hidden1)
-            outputLF = Dense(1, activation='linear', name='LF')(hidden2)
-            outputadd = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']),
-                            kernel_initializer=params['kernel_init'], name=f'{name}_hidden3')(hidden2)
-            merge = concatenate([outputLF, outputadd])
-            hidden3 = Dense(params['nodes'], activation='tanh', kernel_regularizer=l2((1 - params['alpha']) * params['l2weight']),
-                            kernel_initializer=params['kernel_init'], name=f'{name}_hidden4')(merge)
-            outputHF = Dense(1, activation='linear', name='HF')(hidden3)
-            output = [outputHF, outputLF]
-            model = Model(inputs=inputs, outputs=output)
-            opti = Helpers_NN.getOpti(params['opt'], params['lr'])
-            model.compile(loss=Helpers_NN.custom_loss, loss_weights=[params['alpha'], 1 - params['alpha']], optimizer=opti)
-            return model
 
         # For other cases, create a standard model
         model = Model(inputs=inputs, outputs=output)

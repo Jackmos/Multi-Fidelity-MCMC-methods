@@ -3,8 +3,6 @@ import h5py
 import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from typing import Tuple, List
-from tensorflow.keras.optimizers import Adam, Nadam, Adamax
-from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Dense, Input, concatenate
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
@@ -175,7 +173,6 @@ class SystemSolver(ABC):
                     Default is "ODE_graphic_results".
         """
         
-        # Use the create_output_directory method to ensure the output directory exists
         output_dir = Clean.create_output_directory("output", folder_name)
         
         # Sort by the first parameter (or another criterion)
@@ -190,10 +187,8 @@ class SystemSolver(ABC):
             # Create a new figure for each group of 3
             fig, axes = plt.subplots(1, 3, figsize=(18, 6))
             
-            # Ensure axes is always a list, even if there's only one subplot
             axes = np.ravel(axes)
             
-            # Select the current group of plots (up to 3)
             current_group = self.y_values_list[plot_group_start:plot_group_start + 3]
             current_params = self.params[plot_group_start:plot_group_start + 3]
             
@@ -210,11 +205,9 @@ class SystemSolver(ABC):
                 ax.legend()
                 ax.set_title(f'System for params={params}')
             
-            # Hide any unused subplots (if the total number isn't a multiple of 3)
             for j in range(len(current_group), 3):
                 fig.delaxes(axes[j])
             
-            # Set layout and save the figure
             fig.suptitle(f'System of Differential Equations for Parameters {plot_group_start + 1} to {plot_group_start + len(current_group)}', fontsize=16)
             plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust to fit the title
             
@@ -224,94 +217,6 @@ class SystemSolver(ABC):
             plt.close(fig)  
 
 
-
-
-
-    @staticmethod
-    def plot_systems(x_HF, y_HF, y_test_pred, final_model_trained, unique_combinations, colors_data, colors_predictions, title_suffix, output_folder):
-        """
-        Plots the data and model predictions for each unique combination.
-
-        Args:
-            x_HF: The input data.
-            y_HF: The real output data.
-            y_test_pred: The predicted output data.
-            final_model_trained: The trained model object with prediction methods.
-            unique_combinations: The unique combinations of the last columns in x_HF.
-            colors_data: The color palette for the data plots.
-            colors_predictions: The color palette for the prediction plots.
-            title_suffix: The suffix to add to each plot's title.
-            output_folder: The folder where the plots will be saved.
-        """
-        for comb in unique_combinations:
-            mask = np.all(x_HF[:, 1:] == comb, axis=1)
-
-            plt.figure()
-
-            for i in range(y_test_pred.shape[1]):
-                color_data = colors_data[i]
-                color_prediction = colors_predictions[i]
-
-                plt.plot(x_HF[mask, 0], y_HF[mask, i], label=f'System {i+1} Data', color=color_data, linestyle='-', linewidth=2)
-
-                plt.plot(x_HF[mask, 0], final_model_trained.model_list[0].prediction(x_HF[mask])[:, i] if title_suffix == "LF Network" 
-                        else final_model_trained.prediction(x_HF[mask])[:, i], 
-                        label=f'System {i+1} Prediction {title_suffix}', color=color_prediction, linestyle='--' if title_suffix == "LF Network" else '-.', linewidth=2)
-
-            plt.xlabel('x')
-            plt.ylabel('y')
-            plt.title(f'Plot for Combination {comb} {title_suffix}')
-            plt.legend()
-            plt.grid(True)
-
-            base_dir = 'output'
-            full_output_dir = Clean.create_output_directory(base_dir, output_folder)
-            plt.savefig(os.path.join(full_output_dir, f'plot_combination_{comb}_{title_suffix.replace(" ", "_")}.png'))
-            plt.close()
-
-    @staticmethod
-    def plot_lf_network(x_HF, y_HF, y_test_pred, final_model_trained, output_folder='tutorial_plots'):
-        """
-        Plots the data and predictions for the LF Network case.
-
-        Args:
-            x_HF: The input data.
-            y_HF: The real output data.
-            y_test_pred: The predicted output data.
-            final_model_trained: The trained model object with prediction methods.
-            output_folder: The folder where the plots will be saved.
-        """
-        unique_combinations = np.unique(x_HF[:, 1:], axis=0)
-        colors_data = plt.cm.viridis(np.linspace(0, 0.5, y_test_pred.shape[1]))
-        colors_predictions = plt.cm.plasma(np.linspace(0, 1, y_test_pred.shape[1]))
-
-        SystemSolver.plot_systems(x_HF, y_HF, y_test_pred, final_model_trained, unique_combinations, colors_data, colors_predictions, "LF Network", output_folder)
-
-    @staticmethod
-    def plot_mf_network(x_HF, y_HF, y_test_pred, final_model_trained, output_folder='tutorial_plots'):
-        """
-        Plots the data and predictions for the MF Network case.
-
-        Args:
-            x_HF: The input data.
-            y_HF: The real output data.
-            y_test_pred: The predicted output data.
-            final_model_trained: The trained model object with prediction methods.
-            output_folder: The folder where the plots will be saved.
-        """
-        unique_combinations = np.unique(x_HF[:, 1:], axis=0)
-        colors = plt.cm.viridis(np.linspace(0, 1, y_test_pred.shape[1]))
-
-        SystemSolver.plot_systems(x_HF, y_HF, y_test_pred, final_model_trained, unique_combinations, colors, colors, "MF Network", output_folder)
-        
-
-
-
-
-
-
-
-
     def get_dim(self)-> int:
         """
         Obtain the dimension of the system of equations
@@ -319,73 +224,64 @@ class SystemSolver(ABC):
         return self.dim_sys 
 
     @staticmethod
-    def plot_per_parameter(x, y, y_pred, fwd_surrogate, folder_name: str = "results_per_parameter") -> None:
+    def save_plots_per_param(x_HF: np.ndarray, y_HF: np.ndarray, y_test_pred: np.ndarray, 
+                            final_model, folder_name: str = "ODE_graphic_results") -> None:
         """
-        Static method to plot and save the results of the system's evolution for different parameter sets.
-        
-        Parameters:
-        - x: NumPy array of input data with shape (28020, 5).
-        - y: NumPy array of actual system data.
-        - y_pred: NumPy array of predicted system data.
-        - fwd_surrogate: 3 step NN
-        - folder_name: Name of the folder where plots will be saved. Defaults to 'results_per_parameter'.
+        Generate and save plots comparing real data with model predictions for unique parameter combinations.
+
+        Args:
+        - x_HF: High-fidelity input data, where the first column represents the independent variable 
+                and subsequent columns represent system parameters.
+        - y_HF: High-fidelity output data corresponding to the real system.
+        - y_test_pred: Predicted output data from the model for testing.
+        - final_model: The trained model used for generating predictions.
+        - folder_name: Directory name where plots will be saved (default is "ODE_graphic_results").
+
+        Returns:
+        - None: Saves the plots to the specified folder.
         """
 
-        # Ensure the folder is saved within the "test" directory
-        folder_path = os.path.join("test", folder_name)
+        output_dir = Clean.create_output_directory("output", folder_name)
 
-        # Create the folder if it doesn't exist
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        # Extract the last 4 columns for combination filtering
-        combinations = x[:, 1:]  # Taking the last 4 columns
-        
-        # Find unique combinations
+        # Extract unique combinations from the last four columns of x_HF
+        combinations = x_HF[:, 1:]
         unique_combinations = np.unique(combinations, axis=0)
 
-        # Generate two different color palettes
-        colors_data = plt.cm.viridis(np.linspace(0, 0.5, y_pred.shape[1]))
-        colors_predictions = plt.cm.plasma(np.linspace(0, 1, y_pred.shape[1]))
+        # Generate a single color palette for data and predictions
+        colors = plt.cm.viridis(np.linspace(0, 1, y_test_pred.shape[1]))
 
-        # Iterate over each unique combination
+        # Iterate through each unique combination
         for comb in unique_combinations:
-            # Filter the rows that match the current combination
+            # Create a mask for rows that match the current combination
             mask = np.all(combinations == comb, axis=1)
-            filtered_data = x[mask]
 
-            # Create a new figure for each combination
             plt.figure()
-            
-            # Plot each system's data and corresponding predictions
-            for i in range(y_pred.shape[1]):
-                color_data = colors_data[i]
-                color_prediction = colors_predictions[i]
 
-                # Plot the actual system data
-                plt.plot(x[mask, 0], y[mask, i], label=f'System {i+1} Data', color=color_data, linestyle='-', linewidth=2)
+            for i in range(y_test_pred.shape[1]):
+                color = colors[i]
 
-                # Plot the model prediction with a different color
-                plt.plot(
-                    x[mask, 0],
-                    fwd_surrogate.model_list[1].prediction(np.hstack((x[mask], fwd_surrogate.model_list[0].prediction(x[mask]))))[:, i],
-                    label=f'System {i+1} Prediction LF Network', 
-                    color=color_prediction, 
-                    linestyle='--', 
-                    linewidth=2
-                )
+                # Plot the real data
+                plt.plot(x_HF[mask, 0], y_HF[mask, i], label=f'System {i+1} Data', color=color, linestyle='-', linewidth=2)
 
-            # Additional plot customization
+                # Plot the model prediction
+                plt.plot(x_HF[mask, 0], final_model.prediction(x_HF[mask])[:, i], 
+                        label=f'System {i+1} Prediction MF Network', color=color, linestyle='-.', linewidth=2)
+
             plt.xlabel('x')
             plt.ylabel('y')
             plt.title(f'Plot for Combination {comb}')
             plt.legend()
             plt.grid(True)
 
-            # Save the figure to the specified folder
-            plot_filename = f"{folder_path}/plot_combination_{'_'.join(map(str, comb))}.png"
-            plt.savefig(plot_filename)
+            # Save the plot to the output directory
+            combination_str = '_'.join(map(str, comb))  
+            plot_filename = f"plot_combination_{combination_str}.png"
+            plot_path = os.path.join(output_dir, plot_filename)
+            plt.savefig(plot_path)
+
             plt.close()
+
+
 
     @staticmethod    
     def getModel(params: dict, num_inputs: int, name: str, num_outputs: int) -> Model:
@@ -564,8 +460,7 @@ class System3(SystemSolver):
         Returns:
         - Array of derivatives (dy/dt)
         """
-        # y[0] represents the activator variable (v)
-        # y[1] represents the inhibitor variable (w)
+
 
         # Equation for the activator (v)
         dvdt = y[0] - (y[0]**3) / 3 - y[1] + alpha
@@ -608,8 +503,7 @@ class System4(SystemSolver):
         Returns:
         - Array of derivatives (dy/dt)
         """
-        # y[0] is x (the primary variable)
-        # y[1] is dx/dt (the derivative of x)
+ 
         
         # Equation for dx/dt
         dxdt = y[1]

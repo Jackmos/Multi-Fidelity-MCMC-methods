@@ -1,8 +1,6 @@
-
+# Example IV: LSTM and Burger
 import tensorflow as tf
 import numpy as np
-import os
-import sys
 import keras
 from utils.network_utils import NetworkConfig, NetworkFactory
 from utils.bayesian_utils import BayesianInverseProblem_NN
@@ -90,30 +88,22 @@ def main_function():
     # updated number of relelvant modes and basis for the forward model
     burger_eq.set_POD(16,rom_burger.get_basis())
 
-    index_re=0
-
     mean_prior =np.array([.5])
     cov_prior=np.diag([ .1])
 
+    index_re=0
     parameters =np.array([burger_eq.re_grid_lstm_test[index_re,0]])
     rwmh_adaptive = True
     iterations = 3000
-    burnin = 2000#1500
+    burnin = 2000
     n_chains = 4
     algo = "MH_tiny"
 
 
-    module_directory = os.path.abspath(os.path.join('..', 'utils'))
-
-    # Add the 'utils' directory containing Structure.py to the PYTHONPATH
-    os.environ['PYTHONPATH'] = module_directory
-    sys.path.append(module_directory)
     BB=BayesianInverseProblem_NN(algorithm_name=algo,forward_NN=model)
 
 
- 
-
-    BB.run(input_support=burger_eq.x.reshape(-1,1),
+    BB.run(input_support=burger_eq.x.reshape(-1,1),                 # additional input. x is necessary to evaluate u_LF
         inputs_HF=input_test[:,:,[0,1]].reshape(-1,2),
         domain_bounds=(0.,2.),
         mean_prior=mean_prior, 
@@ -131,11 +121,9 @@ def main_function():
         levels=1,  
         subsampling_rate=1,
         force_sequential=True,
-        forward_low_fidelity= burger_eq._forward_low_fidelity
+        forward_low_fidelity= burger_eq._forward_low_fidelity       # additional function introduced for the inverse model.
+                                                                    # It allows the inverse methods to have acces and use POD basis 
     )
-
-
-
 
 
 

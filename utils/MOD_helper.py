@@ -1,12 +1,10 @@
 import numpy as np
 from numpy import newaxis as _
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 from sklearn.utils import extmath
 from typing import Any, Optional, List, Tuple
-from numba import njit, prange
 import scipy.io as sio
-
+from utils.helper_functions import Clean
 
 class ROM:
     
@@ -160,11 +158,26 @@ class ROM:
             self.u_POD_hf_train=u_pod.T
         return u_pod,self.basis, self.S
 
-    def projection(self, u_pod,num_basis, M_mu=None,M_t=None):
+    def projection(self, u_pod: np.ndarray, num_basis: Optional[int], M_mu: Optional[int] = None, M_t: Optional[int] = None) -> np.ndarray:
+        """
+        Project the given POD data onto a reduced basis.
+
+        Args:
+        - u_pod: Input POD data (numpy array).
+        - num_basis: Number of basis vectors to use for the projection. If None, uses all basis vectors.
+        - M_mu: Number of parameter samples (optional). Defaults to the class attribute M_mu_train if not provided.
+        - M_t: Number of time steps (optional). Defaults to the class attribute M_t_train if not provided.
+
+        Returns:
+        - u: Projected data, reshaped to dimensions (M_mu, M_t, -1).
+
+        Raises:
+        - ValueError: If the basis is not initialized (self.basis is None).
+        """
         if M_mu is None:
-            M_mu=self.M_mu_train
+            M_mu = self.M_mu_train
         if M_t is None: 
-            M_t=self.M_t_train
+            M_t = self.M_t_train
 
         if self.basis is None:
             raise ValueError("Missing basis!")
@@ -249,58 +262,6 @@ class ROM:
         plt.xlabel('# bases')
         plt.show()
 
-#############################################################################################################
-    def perform_POD(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Perform Proper Orthogonal Decomposition (POD) on high-fidelity (HF) and low-fidelity (LF) data.
-        
-        Reshapes the data, computes the POD basis using randomized SVD on HF data, and projects both HF and LF 
-        data onto the computed POD basis. The data is then reshaped for LSTM training.
-
-        Returns:
-        - Tuple containing input and output data for both training and testing:
-          - input_train (np.ndarray): Input data for training.
-          - output_train (np.ndarray): Output data for training.
-          - input_test (np.ndarray): Input data for testing.
-          - output_test (np.ndarray): Output data for testing.
-        """
-        # Reshape data for POD
-        self.u_hf_pod = np.reshape(self.model.u_hf, (self.model.nre_train * self.model.nt, self.model.nh))
-        self.u_lf_pod = np.reshape(self.model.u_lf, (self.model.nre_train * self.model.nt, self.model.nh))
-        self.u_lf_pod_test = np.reshape(self.model.u_lf_test, (self.model.nre_test * self.model.nt, self.model.nh))
-        self.u_hf_pod_test = np.reshape(self.model.u_hf_test, (self.model.nre_test * self.model.nt, self.model.nh))
-
-        # Compute randomized SVD for POD basis
-        self.basis, self.S = self.compute_randomized_SVD(self.u_hf_pod, self.n_POD, self.model.nh, 1)
-
-        # Project data onto POD basis
-        self.ulf_train = self.u_lf_pod @ self.basis
-        self.uhf_train = self.u_hf_pod @ self.basis
-        self.ulf_test = self.u_lf_pod_test @ self.basis
-        self.uhf_test = self.u_hf_pod_test @ self.basis
-
-        # Reshape data for LSTM network
-        self.ulf_train = np.reshape(self.ulf_train, (self.model.nre_train, self.model.nt, self.n_POD))
-        self.uhf_train = np.reshape(self.uhf_train, (self.model.nre_train, self.model.nt, self.n_POD))
-        self.ulf_test = np.reshape(self.ulf_test, (self.model.nre_test, self.model.nt, self.n_POD))
-        self.uhf_test = np.reshape(self.uhf_test, (self.model.nre_test, self.model.nt, self.n_POD))
-#######################à
-
-
-
-
-        # Prepare LSTM inputs
-        self.t_grid_lstm, self.re_grid_lstm = np.meshgrid(self.model.t, self.model.re)
-        self.input_train = np.concatenate((self.t_grid_lstm[..., _], self.re_grid_lstm[..., _], self.ulf_train), axis=2)
-        self.output_train = self.uhf_train
-
-        # Prepare LSTM test inputs
-        self.t_grid_lstm_test, self.re_grid_lstm_test = np.meshgrid(self.model.t, self.model.re_test)
-        self.input_test = np.concatenate((self.t_grid_lstm_test[..., _], self.re_grid_lstm_test[..., _], self.ulf_test), axis=2)
-        self.output_test = self.uhf_test 
-        
-        return self.input_train, self.output_train, self.input_test, self.output_test
-        
     def plot_POD_coefficients(self, ind_re: int) -> None:
         """
         Plot POD coefficients: Low-Fidelity (LF) vs High-Fidelity (HF).
