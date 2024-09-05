@@ -33,15 +33,15 @@ It contains:
 
 `Doc\`- folder containing the final report (will be updated with the presentation very soon!)
 
-requirements.txt - file containing the libraries and the correspondent versions used to generate the shared results
+requirements.txt - file containing all the libraries and the correspondent versions for the project, used to generate the shared results
 
 ## Environment
 - **Python Version**: This project was developed and tested using Python `3.12.2`
 To get a local copy of this project, run the following commands:
 
-```bash
-git clone https://github.com/your-username/my-python-project.git
-cd my-python-project
+git clone https://github.com/Jackmos/Multi-Fidelity-MCMC-methods.git
+
+to run the 
 
 ## Dependences
 - `optuna` [installation guide](https://optuna.readthedocs.io/en/stable/installation.html)
