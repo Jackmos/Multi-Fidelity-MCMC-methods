@@ -52,7 +52,7 @@ def create_folder_name(base_name: str, max_length: int = 255) -> str:
         folder_name = folder_name[:max_length - 9] + "_" + uuid.uuid4().hex[:8]
     
     # Create the directory if it doesn't exist
-    os.makedirs(folder_name, exist_ok=True)
+    # os.makedirs(folder_name, exist_ok=True)
     
     return folder_name
 
@@ -1559,7 +1559,7 @@ class MCMC_cuqi:
 
         adapt_str = "adaptive" if adapt else "non_adaptive"
         base_name = f"MCMC_cuqi_algo{algo}_{adapt_str}_scale{scale}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self.folder_name = self.create_folder_name(base_name)
+        self.folder_name =   Clean.create_output_directory("output",base_name)
 
     def __call__(
         self, 
@@ -1643,13 +1643,7 @@ class MCMC_cuqi:
             mean_reshaped = mean
         return x, mean_reshaped
 
-    @staticmethod
-    def create_folder_name(base_name: str) -> str:
-        folder_path = os.path.join(os.getcwd(), base_name)
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        return folder_path
-    
+   
 
     def setup_proposal(self, *args, **kwargs) -> object:
         """
